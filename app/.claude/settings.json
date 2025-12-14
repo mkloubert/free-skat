@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(./sandbox*)",
+      "Read(./sandbox/*)",
+      "Read(./TODOs.md)",
+      "Read(node_modules/**)",
+      "Read(.venv/**)",
+      "Read(./api/.import/**)"
+    ]
+  }
+}
