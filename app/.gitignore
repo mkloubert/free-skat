@@ -91,6 +91,12 @@ typings/
 # Electron-Forge
 out/
 
+# Go
+/server/freeskat-server
+/server/*.exe
+*.test
+*.out
+
 # custom
 /.claude/*.local.json
 /.jskat/**

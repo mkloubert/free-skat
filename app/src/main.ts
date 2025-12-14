@@ -15,11 +15,15 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import started from "electron-squirrel-startup";
+import { registerNetworkIpc, cleanupConnections } from "./ipc/network";
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+// Register IPC handlers
+registerNetworkIpc();
 
 const createWindow = () => {
   // Create the browser window.
@@ -56,6 +60,11 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+// Clean up network connections before quitting
+app.on("before-quit", () => {
+  cleanupConnections();
 });
 
 app.on("activate", () => {
