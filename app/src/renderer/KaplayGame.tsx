@@ -12,14 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import kaplay, { type KAPLAYCtx } from "kaplay";
 import { createGameScene } from "./game/scenes/gameScene";
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from "./game/utils/constants";
 
-export function KaplayGame() {
+/**
+ * Handle for controlling the KaplayGame from parent components.
+ */
+export interface KaplayGameHandle {
+  /** Restarts the game scene */
+  restart: () => void;
+}
+
+export const KaplayGame = forwardRef<KaplayGameHandle>(function KaplayGame(
+  _props,
+  ref
+) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const kRef = useRef<KAPLAYCtx | null>(null);
+
+  // Expose restart function to parent
+  useImperativeHandle(ref, () => ({
+    restart: () => {
+      if (kRef.current) {
+        kRef.current.go("game");
+      }
+    },
+  }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -62,4 +82,4 @@ export function KaplayGame() {
       <canvas ref={canvasRef} />
     </div>
   );
-}
+});

@@ -12,4 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-export * from "./gameScene";
+/**
+ * Game scenes module exports.
+ */
+
+// Types
+export * from "./types";
+
+// Card functions
+export * from "./cardObjects";
+export * from "./cardAnimations";
+
+// Hand management
+export {
+  calculateHandPositions,
+  updateCardHoverState,
+  updateLegalMoveHighlighting,
+} from "./handManagement";
+
+// Trick management
+export {
+  playCardToTrick,
+  repositionPlayerHand,
+  simulateOpponentPlay,
+  collectTrick,
+} from "./trickManagement";
+
+// Game flow
+export * from "./gameFlow";
+export * from "./biddingFlow";
+export * from "./skatFlow";
+
+// Main scene
+export { createGameScene } from "./gameScene";

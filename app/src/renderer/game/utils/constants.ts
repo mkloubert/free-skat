@@ -88,19 +88,19 @@ export const TABLE_POSITIONS = {
   },
   /** Player positions (where their hands/cards are shown) */
   players: {
-    /** Bottom - current player */
+    /** Bottom - current player (Forehand/Vorhand) */
     forehand: {
       x: CANVAS_WIDTH / 2,
       y: CANVAS_HEIGHT - 80,
     },
-    /** Right side - opponent */
+    /** Left side - next player clockwise (Middlehand/Mittelhand) */
     middlehand: {
-      x: CANVAS_WIDTH - 100,
+      x: 100,
       y: CANVAS_HEIGHT / 2,
     },
-    /** Left side - opponent */
+    /** Right side - third player clockwise (Rearhand/Hinterhand) */
     rearhand: {
-      x: 100,
+      x: CANVAS_WIDTH - 100,
       y: CANVAS_HEIGHT / 2,
     },
   },
@@ -120,11 +120,11 @@ export const TRICK_POSITIONS = {
     y: CANVAS_HEIGHT / 2 + 30,
   },
   middlehand: {
-    x: CANVAS_WIDTH / 2 + 50,
+    x: CANVAS_WIDTH / 2 - 50,
     y: CANVAS_HEIGHT / 2 - 20,
   },
   rearhand: {
-    x: CANVAS_WIDTH / 2 - 50,
+    x: CANVAS_WIDTH / 2 + 50,
     y: CANVAS_HEIGHT / 2 - 20,
   },
 };
@@ -138,6 +138,8 @@ export const ANIMATION = {
   cardHover: 0.1,
   trickCollect: 0.5,
   deal: 0.15,
+  cardDeal: 0.15,
+  dealDelay: 0.05,
 };
 
 /**
@@ -146,6 +148,8 @@ export const ANIMATION = {
 export const LAYERS = {
   background: 0,
   table: 10,
+  dropZone: 15,
+  deck: 18,
   opponentCards: 20,
   skat: 30,
   playedCards: 40,

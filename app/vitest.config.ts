@@ -12,28 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * FreeSkat shared types and utilities.
- * @module shared
- */
+// eslint-disable-next-line import/no-unresolved
+import { defineConfig } from "vitest/config";
 
-// Card types
-export * from "./suit";
-export * from "./rank";
-export * from "./card";
-export * from "./trick";
-
-// Game types
-export * from "./player";
-export * from "./gametype";
-export * from "./gamestate";
-export * from "./bidding";
-export * from "./skat";
-export * from "./announcement";
-export * from "./rules";
-export * from "./game";
-export * from "./session";
-export * from "./ai";
-
-// Protocol types
-export * from "./protocol";
+export default defineConfig({
+  test: {
+    include: ["src/**/*.test.ts"],
+    globals: true,
+  },
+});

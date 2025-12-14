@@ -27,6 +27,13 @@ import {
   createHandFromCards,
   addCardToHand,
   removeCardFromHand,
+  BiddingState,
+  BiddingResult,
+  createBiddingState,
+  processBid,
+  processHold,
+  processPass,
+  getLeftNeighbor,
 } from "../../shared";
 
 /**
@@ -72,6 +79,8 @@ export interface GameStoreState {
   skat: Card[];
   /** Original skat (before pickup) */
   originalSkat: Card[];
+  /** Whether the declarer picked up the skat */
+  skatPickedUp: boolean;
 
   // === Players ===
   /** Player data for each position */
@@ -90,12 +99,18 @@ export interface GameStoreState {
   trickNumber: number;
 
   // === Bidding State ===
-  /** Current bid value */
+  /** Full bidding state machine */
+  bidding: BiddingState;
+  /** Current bid value (convenience accessor) */
   currentBid: number;
-  /** Highest bidder */
+  /** Highest bidder (convenience accessor) */
   highestBidder: Player | null;
-  /** Players who have passed */
+  /** Players who have passed (convenience accessor) */
   passedPlayers: Player[];
+
+  // === Session State (persists across games) ===
+  /** Cumulative session scores for each player */
+  sessionScores: Record<Player, number>;
 
   // === Actions ===
   /** Initialize a new game */
@@ -120,8 +135,12 @@ export interface GameStoreState {
   declareGame: (gameType: GameType, contract: Contract) => void;
   /** Place a bid */
   placeBid: (player: Player, bid: number) => void;
+  /** Hold on current bid */
+  holdBid: (player: Player) => void;
   /** Pass on bidding */
   passBid: (player: Player) => void;
+  /** Start the bidding phase */
+  startBidding: () => void;
   /** Get a player's hand */
   getPlayerHand: (player: Player) => Hand;
   /** Reset the game */
@@ -162,6 +181,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   contract: null,
   skat: [],
   originalSkat: [],
+  skatPickedUp: false,
 
   players: {
     [Player.Forehand]: createInitialPlayerData("You"),
@@ -175,27 +195,40 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   currentTrick: createInitialTrickState(Player.Forehand),
   trickNumber: 0,
 
+  bidding: createBiddingState(),
   currentBid: 0,
   highestBidder: null,
   passedPlayers: [],
 
+  sessionScores: {
+    [Player.Forehand]: 0,
+    [Player.Middlehand]: 0,
+    [Player.Rearhand]: 0,
+  },
+
   // === Actions ===
   initGame: () => {
+    // Vorhand (lead player) is always to the left of the dealer
+    const dealer = get().dealer;
+    const vorhand = getLeftNeighbor(dealer);
+
     set({
       gameState: GameState.GameStart,
       gameType: GameType.Grand,
       contract: null,
       skat: [],
       originalSkat: [],
+      skatPickedUp: false,
       players: {
         [Player.Forehand]: createInitialPlayerData("You"),
         [Player.Middlehand]: createInitialPlayerData("Opponent 1"),
         [Player.Rearhand]: createInitialPlayerData("Opponent 2"),
       },
-      currentPlayer: Player.Forehand,
+      currentPlayer: vorhand,
       declarer: null,
-      currentTrick: createInitialTrickState(Player.Forehand),
+      currentTrick: createInitialTrickState(vorhand),
       trickNumber: 0,
+      bidding: createBiddingState(),
       currentBid: 0,
       highestBidder: null,
       passedPlayers: [],
@@ -332,6 +365,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
     set({
       gameState: GameState.Discarding,
+      skatPickedUp: true,
       players: {
         ...state.players,
         [state.declarer]: {
@@ -398,42 +432,90 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   },
 
   placeBid: (player: Player, bid: number) => {
-    set({
-      currentBid: bid,
-      highestBidder: player,
-    });
+    const state = get();
+    try {
+      const newBidding = processBid(state.bidding, player, bid);
+      set({
+        bidding: newBidding,
+        currentBid: newBidding.currentBid,
+        highestBidder: newBidding.currentBidder,
+        currentPlayer: newBidding.activePlayer,
+        passedPlayers: Array.from(newBidding.passedPlayers),
+      });
+    } catch {
+      // Invalid bid - ignore
+      console.warn(`Invalid bid: ${bid} by ${player}`);
+    }
+  },
+
+  holdBid: (player: Player) => {
+    const state = get();
+    try {
+      const newBidding = processHold(state.bidding, player);
+      set({
+        bidding: newBidding,
+        currentBid: newBidding.currentBid,
+        currentPlayer: newBidding.activePlayer,
+      });
+    } catch {
+      // Invalid hold - ignore
+      console.warn(`Invalid hold by ${player}`);
+    }
   },
 
   passBid: (player: Player) => {
     const state = get();
-    const newPassedPlayers = [...state.passedPlayers, player];
+    try {
+      const newBidding = processPass(state.bidding, player);
+      const newPassedPlayers = Array.from(newBidding.passedPlayers);
 
-    // If two players passed, remaining player is declarer (or all passed = Ramsch)
-    if (newPassedPlayers.length >= 2) {
-      const allPlayers = [Player.Forehand, Player.Middlehand, Player.Rearhand];
-      const remainingPlayer = allPlayers.find(
-        (p) => !newPassedPlayers.includes(p)
-      );
-
-      if (remainingPlayer !== undefined) {
+      // Check if bidding is complete
+      if (newBidding.result === BiddingResult.HasDeclarer) {
         set({
+          bidding: newBidding,
           passedPlayers: newPassedPlayers,
-          declarer: remainingPlayer,
+          declarer: newBidding.declarer,
+          currentBid: newBidding.finalBid,
           gameState: GameState.PickingUpSkat,
-          currentPlayer: remainingPlayer,
+          currentPlayer: newBidding.declarer!,
         });
-      } else {
+      } else if (newBidding.result === BiddingResult.AllPassed) {
         // All passed - Ramsch
         set({
+          bidding: newBidding,
           passedPlayers: newPassedPlayers,
           declarer: null,
           gameType: GameType.Ramsch,
           gameState: GameState.TrickPlaying,
+          currentPlayer: Player.Forehand,
+        });
+      } else {
+        // Bidding continues
+        set({
+          bidding: newBidding,
+          passedPlayers: newPassedPlayers,
+          currentPlayer: newBidding.activePlayer,
+          currentBid: newBidding.currentBid,
+          highestBidder: newBidding.currentBidder,
         });
       }
-    } else {
-      set({ passedPlayers: newPassedPlayers });
+    } catch {
+      // Invalid pass - ignore
+      console.warn(`Invalid pass by ${player}`);
     }
+  },
+
+  /** Start bidding phase */
+  startBidding: () => {
+    const newBidding = createBiddingState();
+    set({
+      gameState: GameState.Bidding,
+      bidding: newBidding,
+      currentBid: 0,
+      highestBidder: null,
+      passedPlayers: [],
+      currentPlayer: newBidding.activePlayer,
+    });
   },
 
   getPlayerHand: (player: Player) => {
@@ -441,6 +523,74 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   },
 
   resetGame: () => {
+    const state = get();
+
+    // Calculate and update session scores from completed game
+    const newSessionScores = { ...state.sessionScores };
+
+    if (state.gameType === GameType.Ramsch) {
+      // Ramsch: player with most points loses (gets negative score)
+      const maxPoints = Math.max(
+        ...Object.values(state.players).map((p) => p.tricksPoints)
+      );
+      for (const player of [
+        Player.Forehand,
+        Player.Middlehand,
+        Player.Rearhand,
+      ]) {
+        if (state.players[player].tricksPoints === maxPoints) {
+          newSessionScores[player] -= maxPoints;
+        }
+      }
+    } else if (state.declarer !== null) {
+      // Normal game: calculate declarer's score
+      const declarerPoints = state.players[state.declarer].tricksPoints;
+      const declarerTricks = state.players[state.declarer].tricksWon;
+      const isNullGame = state.gameType === GameType.Null;
+
+      // Determine if declarer won
+      let declarerWon: boolean;
+      if (isNullGame) {
+        declarerWon = declarerTricks === 0;
+      } else {
+        declarerWon = declarerPoints >= 61;
+      }
+
+      // Calculate game value (simplified - base × 2 for matador + game)
+      const baseValues: Record<GameType, number> = {
+        [GameType.Diamonds]: 9,
+        [GameType.Hearts]: 10,
+        [GameType.Spades]: 11,
+        [GameType.Clubs]: 12,
+        [GameType.Grand]: 24,
+        [GameType.Null]: 23,
+        [GameType.Ramsch]: 0,
+      };
+      let gameValue = baseValues[state.gameType] * 2;
+      if (state.contract?.hand) gameValue += baseValues[state.gameType];
+
+      // Check overbid
+      const overbid = state.currentBid > 0 && gameValue < state.currentBid;
+
+      // Calculate final score
+      let score: number;
+      if (!declarerWon || overbid) {
+        const lossValue = overbid ? state.currentBid : gameValue;
+        score = -2 * lossValue;
+      } else {
+        score = gameValue;
+      }
+
+      newSessionScores[state.declarer] += score;
+    }
+
+    set({ sessionScores: newSessionScores });
+
+    // Rotate dealer to the left neighbor for next game
+    const nextDealer = getLeftNeighbor(state.dealer);
+    set({ dealer: nextDealer });
+
+    // Initialize new game state
     get().initGame();
   },
 }));

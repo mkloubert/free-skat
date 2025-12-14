@@ -13,27 +13,13 @@
 // limitations under the License.
 
 /**
- * FreeSkat shared types and utilities.
- * @module shared
+ * UI components for the FreeSkat game.
  */
 
-// Card types
-export * from "./suit";
-export * from "./rank";
-export * from "./card";
-export * from "./trick";
-
-// Game types
-export * from "./player";
-export * from "./gametype";
-export * from "./gamestate";
-export * from "./bidding";
-export * from "./skat";
-export * from "./announcement";
-export * from "./rules";
-export * from "./game";
-export * from "./session";
-export * from "./ai";
-
-// Protocol types
-export * from "./protocol";
+export { BiddingPanel } from "./BiddingPanel";
+export { AnnouncementPanel } from "./AnnouncementPanel";
+export { SkatSelectionUI } from "./SkatSelectionUI";
+export { ScoreDisplay } from "./ScoreDisplay";
+export { GameResultSummary } from "./GameResultSummary";
+export { RamschNotification } from "./RamschNotification";
+export { GamePhaseIndicator } from "./GamePhaseIndicator";

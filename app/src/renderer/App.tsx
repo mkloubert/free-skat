@@ -12,8 +12,58 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { KaplayGame } from "./KaplayGame";
+import { useCallback, useRef } from "react";
+import { KaplayGame, type KaplayGameHandle } from "./KaplayGame";
+import {
+  BiddingPanel,
+  AnnouncementPanel,
+  SkatSelectionUI,
+  ScoreDisplay,
+  GameResultSummary,
+  RamschNotification,
+  GamePhaseIndicator,
+} from "./components";
+import { Player } from "../shared";
 
+/**
+ * Main application component integrating game canvas and UI overlays.
+ */
 export default function App() {
-  return <KaplayGame />;
+  const gameRef = useRef<KaplayGameHandle>(null);
+
+  // Human player is always Forehand position
+  const humanPlayer = Player.Forehand;
+
+  // Handle new game callback - restarts the KAPlay scene
+  const handleNewGame = useCallback(() => {
+    // Restart the KAPlay game scene (this re-initializes the store and deals cards)
+    gameRef.current?.restart();
+  }, []);
+
+  return (
+    <div style={styles.container}>
+      {/* KAPlay game canvas */}
+      <KaplayGame ref={gameRef} />
+
+      {/* UI overlays */}
+      <GamePhaseIndicator humanPlayer={humanPlayer} />
+      <BiddingPanel humanPlayer={humanPlayer} />
+      <AnnouncementPanel humanPlayer={humanPlayer} />
+      <SkatSelectionUI humanPlayer={humanPlayer} />
+      <RamschNotification />
+      <ScoreDisplay humanPlayer={humanPlayer} />
+      <GameResultSummary humanPlayer={humanPlayer} onNewGame={handleNewGame} />
+    </div>
+  );
 }
+
+/**
+ * App container styles.
+ */
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    position: "relative",
+    width: "100%",
+    height: "100%",
+  },
+};

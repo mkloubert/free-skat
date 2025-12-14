@@ -12,900 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import type {
-  KAPLAYCtx,
-  GameObj,
-  PosComp,
-  ScaleComp,
-  RotateComp,
-  AnchorComp,
-  AreaComp,
-  OpacityComp,
-  ZComp,
-  TextComp,
-  ColorComp,
-} from "kaplay";
+/**
+ * Main game scene for FreeSkat.
+ * This module orchestrates the game UI, dealing, and player interactions.
+ */
+
+import type { KAPLAYCtx } from "kaplay";
 import {
-  Card,
   Player,
   GameState,
-  canPlayCard,
-  getLeftNeighbor,
-  createTrick,
-  addCardToTrick,
-  determineTrickWinner,
+  GameType,
+  sortForGame,
+  BiddingResult,
+  Card,
 } from "../../../shared";
-import { useGameStore, type GameStoreState } from "../../state/gameStore";
+import { useGameStore } from "../../state/gameStore";
 import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
-  CARD_WIDTH,
   HAND_SETTINGS,
   TABLE_POSITIONS,
-  TRICK_POSITIONS,
   LAYERS,
   ANIMATION,
 } from "../utils/constants";
-import { getCardFaceImage, getCardBackImage } from "../utils/cardRenderer";
+
+// Import from local modules
+import {
+  type CardGameObj,
+  type UITextObj,
+  type SceneState,
+  createInitialSceneState,
+} from "./types";
+import { loadCardSprites, createCardObject } from "./cardObjects";
+import { flipCard, animateShuffle, animateCardMove } from "./cardAnimations";
+import {
+  calculateHandPositions,
+  updateCardHoverState,
+  updateLegalMoveHighlighting,
+} from "./handManagement";
+import { playCardToTrick } from "./trickManagement";
+import { processGameFlow } from "./gameFlow";
+import {
+  processAIBidding,
+  performAIBiddingAction,
+  handleBiddingComplete,
+  AI_BIDDING_DELAY,
+} from "./biddingFlow";
+// skatFlow functions are triggered via biddingFlow when bidding completes
 
 /**
- * Card game object with additional properties.
- */
-export interface CardGameObj extends GameObj<
-  PosComp | ScaleComp | RotateComp | AnchorComp | AreaComp | OpacityComp | ZComp
-> {
-  cardData: Card;
-  faceUp: boolean;
-  selected: boolean;
-  baseY: number;
-  isLegalMove: boolean;
-  owner: Player | "skat";
-}
-
-/**
- * UI Text object type.
- */
-type UITextObj = GameObj<PosComp | AnchorComp | ZComp | TextComp | ColorComp>;
-
-/**
- * Drag state for tracking card dragging.
- */
-interface DragState {
-  isDragging: boolean;
-  draggedCard: CardGameObj | null;
-  startPos: { x: number; y: number };
-  offset: { x: number; y: number };
-}
-
-/**
- * Scene state for managing game objects.
- */
-interface SceneState {
-  playerCardObjects: CardGameObj[];
-  opponentCardObjects: [CardGameObj[], CardGameObj[]];
-  skatCardObjects: CardGameObj[];
-  trickCardObjects: (CardGameObj | null)[];
-  selectedCard: CardGameObj | null;
-  currentPlayerText: UITextObj | null;
-  trickCountText: UITextObj | null;
-  pointsText: UITextObj | null;
-  gameInfoText: UITextObj | null;
-  playButton: GameObj | null;
-  dropZone: GameObj | null;
-  dragState: DragState;
-}
-
-/**
- * Loads card sprites into KAPlay.
- */
-async function loadCardSprites(k: KAPLAYCtx, cards: Card[]): Promise<void> {
-  // Load card back
-  const backImage = getCardBackImage();
-  k.loadSprite("card_back", backImage);
-
-  // Load all card faces
-  for (const card of cards) {
-    const spriteName = `card_${card.suit}_${card.rank}`;
-    const faceImage = getCardFaceImage(card);
-    k.loadSprite(spriteName, faceImage);
-  }
-}
-
-/**
- * Creates a card game object.
- */
-function createCardObject(
-  k: KAPLAYCtx,
-  card: Card,
-  x: number,
-  y: number,
-  faceUp: boolean,
-  zIndex: number,
-  owner: Player | "skat"
-): CardGameObj {
-  const spriteName = faceUp ? `card_${card.suit}_${card.rank}` : "card_back";
-
-  const obj = k.add([
-    k.sprite(spriteName),
-    k.pos(x, y),
-    k.anchor("center"),
-    k.area(),
-    k.scale(1),
-    k.rotate(0),
-    k.opacity(1),
-    k.z(zIndex),
-    {
-      cardData: card,
-      faceUp,
-      selected: false,
-      baseY: y,
-      isLegalMove: true,
-      owner,
-    },
-  ]) as CardGameObj;
-
-  return obj;
-}
-
-/**
- * Calculates hand card positions with fan layout.
- */
-function calculateHandPositions(
-  cardCount: number,
-  centerX: number,
-  y: number
-): { x: number; y: number }[] {
-  const positions: { x: number; y: number }[] = [];
-  const totalWidth = (cardCount - 1) * HAND_SETTINGS.cardOverlap + CARD_WIDTH;
-  const startX = centerX - totalWidth / 2 + CARD_WIDTH / 2;
-
-  for (let i = 0; i < cardCount; i++) {
-    positions.push({
-      x: startX + i * HAND_SETTINGS.cardOverlap,
-      y,
-    });
-  }
-
-  return positions;
-}
-
-/**
- * Updates card positions for hover/selection effects.
- */
-function updateCardHoverState(
-  k: KAPLAYCtx,
-  cardObj: CardGameObj,
-  isHovered: boolean,
-  isSelected: boolean
-): void {
-  if (!cardObj || !cardObj.pos) return;
-
-  let targetY = cardObj.baseY;
-
-  if (isSelected) {
-    targetY -= HAND_SETTINGS.selectedPopUp;
-  } else if (isHovered) {
-    targetY -= HAND_SETTINGS.hoverPopUp;
-  }
-
-  const startY = cardObj.pos.y;
-
-  // Animate to target position
-  k.tween(
-    0,
-    1,
-    ANIMATION.cardHover,
-    (t) => {
-      if (cardObj && cardObj.pos) {
-        cardObj.pos.y = startY + (targetY - startY) * t;
-      }
-    },
-    k.easings.easeOutQuad
-  );
-}
-
-/**
- * Updates legal move highlighting for all cards in hand.
- */
-function updateLegalMoveHighlighting(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  gameState: GameStoreState
-): void {
-  const leadCard = gameState.currentTrick.cards.find((c) => c !== null) ?? null;
-  const playerHand = gameState.players[Player.Forehand].hand;
-
-  for (const cardObj of sceneState.playerCardObjects) {
-    const isLegal = canPlayCard(
-      cardObj.cardData,
-      leadCard,
-      playerHand,
-      gameState.gameType
-    );
-    cardObj.isLegalMove = isLegal;
-
-    // Visual feedback for legal/illegal moves
-    if (isLegal) {
-      cardObj.opacity = 1;
-    } else {
-      cardObj.opacity = 0.5;
-    }
-  }
-}
-
-/**
- * Flips a card with animation.
- */
-export function flipCard(
-  k: KAPLAYCtx,
-  cardObj: CardGameObj,
-  onComplete?: () => void
-): void {
-  if (!cardObj || !cardObj.scale || !cardObj.cardData) {
-    if (onComplete) onComplete();
-    return;
-  }
-
-  const duration = ANIMATION.cardFlip;
-
-  const currentScaleX =
-    typeof cardObj.scale.x === "number" ? cardObj.scale.x : 1;
-  const currentScaleY =
-    typeof cardObj.scale.y === "number" ? cardObj.scale.y : 1;
-
-  k.tween(
-    currentScaleX,
-    0,
-    duration / 2,
-    (val) => {
-      if (cardObj && cardObj.scale) {
-        cardObj.scale = k.vec2(val, currentScaleY);
-      }
-    },
-    k.easings.easeInQuad
-  ).onEnd(() => {
-    if (!cardObj || !cardObj.cardData) {
-      if (onComplete) onComplete();
-      return;
-    }
-    const cardData = cardObj.cardData;
-    cardObj.faceUp = !cardObj.faceUp;
-    const newSpriteName = cardObj.faceUp
-      ? `card_${cardData.suit}_${cardData.rank}`
-      : "card_back";
-    cardObj.use(k.sprite(newSpriteName));
-
-    k.tween(
-      0,
-      currentScaleX,
-      duration / 2,
-      (val) => {
-        if (cardObj && cardObj.scale) {
-          cardObj.scale = k.vec2(val, currentScaleY);
-        }
-      },
-      k.easings.easeOutQuad
-    ).onEnd(() => {
-      if (onComplete) {
-        onComplete();
-      }
-    });
-  });
-}
-
-/**
- * Flips a card to a specific state (face-up or face-down).
- */
-export function flipCardTo(
-  k: KAPLAYCtx,
-  cardObj: CardGameObj,
-  faceUp: boolean,
-  onComplete?: () => void
-): void {
-  if (!cardObj) {
-    if (onComplete) onComplete();
-    return;
-  }
-  if (cardObj.faceUp === faceUp) {
-    if (onComplete) {
-      onComplete();
-    }
-    return;
-  }
-  flipCard(k, cardObj, onComplete);
-}
-
-/**
- * Performs a shuffle animation on deck cards.
- */
-function animateShuffle(
-  k: KAPLAYCtx,
-  deckCards: CardGameObj[],
-  centerX: number,
-  centerY: number,
-  onComplete?: () => void
-): void {
-  const shuffleRounds = 3;
-  let currentRound = 0;
-
-  function doShuffleRound(): void {
-    if (currentRound >= shuffleRounds) {
-      // Return all cards to center pile
-      let completed = 0;
-      for (let i = 0; i < deckCards.length; i++) {
-        const card = deckCards[i];
-        if (!card || !card.pos) {
-          completed++;
-          if (completed === deckCards.length && onComplete) {
-            onComplete();
-          }
-          continue;
-        }
-        const startX = card.pos.x;
-        const startY = card.pos.y;
-        const targetY = centerY + i * 0.5;
-        const delay = i * 0.01;
-        k.wait(delay, () => {
-          k.tween(
-            0,
-            1,
-            0.15,
-            (t) => {
-              if (card && card.pos) {
-                card.pos.x = startX + (centerX - startX) * t;
-                card.pos.y = startY + (targetY - startY) * t;
-              }
-            },
-            k.easings.easeOutQuad
-          ).onEnd(() => {
-            completed++;
-            if (completed === deckCards.length && onComplete) {
-              onComplete();
-            }
-          });
-        });
-      }
-      return;
-    }
-
-    // Split deck into two halves and riffle
-    const half = Math.floor(deckCards.length / 2);
-    let completed = 0;
-
-    for (let i = 0; i < deckCards.length; i++) {
-      const card = deckCards[i];
-      if (!card || !card.pos) {
-        completed++;
-        if (completed === deckCards.length) {
-          currentRound++;
-          k.wait(0.05, doShuffleRound);
-        }
-        continue;
-      }
-      const isLeftHalf = i < half;
-      const targetX = centerX + (isLeftHalf ? -40 : 40);
-      const targetY = centerY + (Math.random() - 0.5) * 20;
-      const startX = card.pos.x;
-      const startY = card.pos.y;
-
-      k.tween(
-        0,
-        1,
-        0.1,
-        (t) => {
-          if (card && card.pos) {
-            card.pos.x = startX + (targetX - startX) * t;
-            card.pos.y = startY + (targetY - startY) * t;
-          }
-        },
-        k.easings.easeOutQuad
-      ).onEnd(() => {
-        // Return to center with slight random offset
-        if (!card || !card.pos) {
-          completed++;
-          if (completed === deckCards.length) {
-            currentRound++;
-            k.wait(0.05, doShuffleRound);
-          }
-          return;
-        }
-        const returnStartX = card.pos.x;
-        const returnStartY = card.pos.y;
-        const returnTargetY = centerY + (Math.random() - 0.5) * 5;
-        k.tween(
-          0,
-          1,
-          0.1,
-          (t) => {
-            if (card && card.pos) {
-              card.pos.x = returnStartX + (centerX - returnStartX) * t;
-              card.pos.y = returnStartY + (returnTargetY - returnStartY) * t;
-            }
-          },
-          k.easings.easeInQuad
-        ).onEnd(() => {
-          completed++;
-          if (completed === deckCards.length) {
-            currentRound++;
-            k.wait(0.05, doShuffleRound);
-          }
-        });
-      });
-    }
-  }
-
-  doShuffleRound();
-}
-
-/**
- * Animates a card moving from one position to another.
- */
-function animateCardMove(
-  k: KAPLAYCtx,
-  cardObj: CardGameObj,
-  targetX: number,
-  targetY: number,
-  duration: number,
-  onComplete?: () => void
-): void {
-  if (!cardObj || !cardObj.pos) {
-    if (onComplete) onComplete();
-    return;
-  }
-
-  const startX = cardObj.pos.x;
-  const startY = cardObj.pos.y;
-
-  k.tween(
-    0,
-    1,
-    duration,
-    (t) => {
-      if (cardObj && cardObj.pos) {
-        cardObj.pos.x = startX + (targetX - startX) * t;
-        cardObj.pos.y = startY + (targetY - startY) * t;
-      }
-    },
-    k.easings.easeOutQuad
-  ).onEnd(() => {
-    if (onComplete) {
-      onComplete();
-    }
-  });
-}
-
-/**
- * Plays a card from the player's hand to the trick area.
- */
-function playCardToTrick(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  cardObj: CardGameObj,
-  player: Player,
-  onComplete?: () => void
-): void {
-  const store = useGameStore.getState();
-
-  // Get target position based on player
-  const positions = {
-    [Player.Forehand]: TRICK_POSITIONS.forehand,
-    [Player.Middlehand]: TRICK_POSITIONS.middlehand,
-    [Player.Rearhand]: TRICK_POSITIONS.rearhand,
-  };
-  const targetPos = positions[player];
-
-  // Update z-index for played card
-  cardObj.z = LAYERS.playedCards + player;
-
-  // Animate card to trick position
-  animateCardMove(
-    k,
-    cardObj,
-    targetPos.x,
-    targetPos.y,
-    ANIMATION.cardMove,
-    () => {
-      // Store the card in trick objects
-      sceneState.trickCardObjects[player] = cardObj;
-
-      // Update game store
-      store.playCard(player, cardObj.cardData);
-
-      // Remove from player's hand objects if it's the human player
-      if (player === Player.Forehand) {
-        const index = sceneState.playerCardObjects.indexOf(cardObj);
-        if (index !== -1) {
-          sceneState.playerCardObjects.splice(index, 1);
-        }
-        // Reposition remaining cards
-        repositionPlayerHand(k, sceneState);
-      }
-
-      if (onComplete) {
-        onComplete();
-      }
-    }
-  );
-}
-
-/**
- * Repositions player's hand cards after a card is played.
- */
-function repositionPlayerHand(k: KAPLAYCtx, sceneState: SceneState): void {
-  const positions = calculateHandPositions(
-    sceneState.playerCardObjects.length,
-    TABLE_POSITIONS.players.forehand.x,
-    HAND_SETTINGS.playerHandY
-  );
-
-  for (let i = 0; i < sceneState.playerCardObjects.length; i++) {
-    const cardObj = sceneState.playerCardObjects[i];
-    const pos = positions[i];
-    cardObj.baseY = pos.y;
-    cardObj.z = LAYERS.playerCards + i;
-
-    animateCardMove(k, cardObj, pos.x, pos.y, ANIMATION.cardMove);
-  }
-}
-
-/**
- * Simulates opponent playing a card.
- */
-function simulateOpponentPlay(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  player: Player,
-  onComplete?: () => void
-): void {
-  const store = useGameStore.getState();
-  const opponentIndex = player === Player.Middlehand ? 0 : 1;
-  const opponentCards = sceneState.opponentCardObjects[opponentIndex];
-
-  if (opponentCards.length === 0) {
-    if (onComplete) onComplete();
-    return;
-  }
-
-  // Get lead card for legal move check
-  const leadCard = store.currentTrick.cards.find((c) => c !== null) ?? null;
-  const playerHand = store.players[player].hand;
-
-  // Find a legal card to play (simple AI: first legal card)
-  let cardToPlay: CardGameObj | null = null;
-  for (const cardObj of opponentCards) {
-    if (canPlayCard(cardObj.cardData, leadCard, playerHand, store.gameType)) {
-      cardToPlay = cardObj;
-      break;
-    }
-  }
-
-  if (!cardToPlay) {
-    cardToPlay = opponentCards[0]; // Fallback
-  }
-
-  const selectedCard = cardToPlay;
-
-  // Flip card face up first
-  flipCard(k, selectedCard, () => {
-    // Then animate to trick position
-    playCardToTrick(k, sceneState, selectedCard, player, () => {
-      // Remove from opponent's cards
-      const index = opponentCards.indexOf(selectedCard);
-      if (index !== -1) {
-        opponentCards.splice(index, 1);
-      }
-
-      if (onComplete) {
-        onComplete();
-      }
-    });
-  });
-}
-
-/**
- * Collects the trick cards and moves them to the winner.
- */
-function collectTrick(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  winner: Player,
-  onComplete?: () => void
-): void {
-  const store = useGameStore.getState();
-
-  // Determine collection position based on winner
-  const collectPositions = {
-    [Player.Forehand]: { x: CANVAS_WIDTH - 80, y: CANVAS_HEIGHT - 40 },
-    [Player.Middlehand]: { x: CANVAS_WIDTH - 40, y: CANVAS_HEIGHT / 2 + 80 },
-    [Player.Rearhand]: { x: 40, y: CANVAS_HEIGHT / 2 + 80 },
-  };
-  const collectPos = collectPositions[winner];
-
-  let completed = 0;
-  const trickCards = sceneState.trickCardObjects.filter(
-    (c): c is CardGameObj => c !== null
-  );
-
-  if (trickCards.length === 0) {
-    store.completeTrick(winner);
-    store.startNewTrick(winner);
-    if (onComplete) onComplete();
-    return;
-  }
-
-  for (const cardObj of trickCards) {
-    animateCardMove(
-      k,
-      cardObj,
-      collectPos.x,
-      collectPos.y,
-      ANIMATION.trickCollect,
-      () => {
-        // Fade out and destroy
-        k.tween(1, 0, 0.2, (val) => (cardObj.opacity = val)).onEnd(() => {
-          cardObj.destroy();
-        });
-
-        completed++;
-        if (completed === trickCards.length) {
-          // Clear trick objects
-          sceneState.trickCardObjects = [null, null, null];
-
-          // Update store
-          store.completeTrick(winner);
-          store.startNewTrick(winner);
-
-          if (onComplete) {
-            onComplete();
-          }
-        }
-      }
-    );
-  }
-}
-
-/**
- * Processes the game flow after a card is played.
- */
-function processGameFlow(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  updateUI: () => void
-): void {
-  const store = useGameStore.getState();
-
-  // Check if trick is complete (all 3 cards played)
-  const trickCards = store.currentTrick.cards;
-  const playedCount = trickCards.filter((c) => c !== null).length;
-
-  if (playedCount === 3) {
-    // Determine winner using actual game rules
-    const trick = createTrick(store.currentTrick.forehand);
-    const playerOrder = [Player.Forehand, Player.Middlehand, Player.Rearhand];
-    for (const player of playerOrder) {
-      const card = trickCards[player];
-      if (card) {
-        addCardToTrick(trick, card, player);
-      }
-    }
-    const winner = determineTrickWinner(trick, store.gameType);
-
-    k.wait(0.5, () => {
-      collectTrick(k, sceneState, winner, () => {
-        updateUI();
-
-        // Check if game is over
-        if (store.trickNumber >= 10) {
-          showGameOver(k);
-        } else {
-          // Continue with next trick
-          const currentState = useGameStore.getState();
-          updateLegalMoveHighlighting(k, sceneState, currentState);
-        }
-      });
-    });
-  } else {
-    // Next player's turn
-    const nextPlayer = getLeftNeighbor(store.currentPlayer);
-    store.setCurrentPlayer(nextPlayer);
-    updateUI();
-
-    if (nextPlayer !== Player.Forehand) {
-      // AI plays
-      k.wait(0.5, () => {
-        simulateOpponentPlay(k, sceneState, nextPlayer, () => {
-          processGameFlow(k, sceneState, updateUI);
-        });
-      });
-    } else {
-      // Player's turn - update legal moves
-      const currentState = useGameStore.getState();
-      updateLegalMoveHighlighting(k, sceneState, currentState);
-    }
-  }
-}
-
-/**
- * Shows game over screen.
- */
-function showGameOver(k: KAPLAYCtx): void {
-  const store = useGameStore.getState();
-  const playerPoints = store.players[Player.Forehand].tricksPoints;
-
-  k.add([
-    k.rect(300, 150),
-    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2),
-    k.anchor("center"),
-    k.color(0, 0, 0),
-    k.opacity(0.8),
-    k.z(LAYERS.ui + 10),
-  ]);
-
-  k.add([
-    k.text("Game Over!", { size: 24 }),
-    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30),
-    k.anchor("center"),
-    k.color(255, 255, 255),
-    k.z(LAYERS.ui + 11),
-  ]);
-
-  k.add([
-    k.text(`Your Points: ${playerPoints}`, { size: 18 }),
-    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10),
-    k.anchor("center"),
-    k.color(255, 255, 200),
-    k.z(LAYERS.ui + 11),
-  ]);
-
-  // New game button
-  const newGameBtn = k.add([
-    k.rect(120, 40),
-    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50),
-    k.anchor("center"),
-    k.color(76, 175, 80),
-    k.area(),
-    k.z(LAYERS.ui + 11),
-  ]);
-
-  k.add([
-    k.text("New Game", { size: 14 }),
-    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50),
-    k.anchor("center"),
-    k.color(255, 255, 255),
-    k.z(LAYERS.ui + 12),
-  ]);
-
-  newGameBtn.onClick(() => {
-    k.go("game");
-  });
-}
-
-/**
- * Sets up card interactions after dealing is complete.
- */
-function setupCardInteractions(
-  k: KAPLAYCtx,
-  sceneState: SceneState,
-  updateUI: () => void
-): void {
-  const processFlow = () => {
-    processGameFlow(k, sceneState, updateUI);
-  };
-
-  for (const cardObj of sceneState.playerCardObjects) {
-    // Hover effects
-    cardObj.onHover(() => {
-      if (!cardObj.selected && cardObj.isLegalMove) {
-        updateCardHoverState(k, cardObj, true, false);
-      }
-    });
-
-    cardObj.onHoverEnd(() => {
-      if (!cardObj.selected && !sceneState.dragState.isDragging) {
-        updateCardHoverState(k, cardObj, false, false);
-      }
-    });
-
-    // Mouse down to start dragging
-    cardObj.onMouseDown(() => {
-      const currentState = useGameStore.getState();
-      if (currentState.currentPlayer !== Player.Forehand) return;
-      if (!cardObj.isLegalMove) return;
-      if (!cardObj.pos) return;
-
-      const mousePos = k.mousePos();
-      sceneState.dragState.isDragging = true;
-      sceneState.dragState.draggedCard = cardObj;
-      sceneState.dragState.startPos = { x: cardObj.pos.x, y: cardObj.pos.y };
-      sceneState.dragState.offset = {
-        x: mousePos.x - cardObj.pos.x,
-        y: mousePos.y - cardObj.pos.y,
-      };
-      cardObj.z = LAYERS.draggedCard;
-    });
-
-    // Track last click time for double-click detection
-    let lastClickTime = 0;
-    const DOUBLE_CLICK_THRESHOLD = 300;
-
-    // Click to select (with double-click detection)
-    cardObj.onClick(() => {
-      if (sceneState.dragState.isDragging) return;
-
-      const currentState = useGameStore.getState();
-      if (currentState.currentPlayer !== Player.Forehand) return;
-
-      if (!cardObj.isLegalMove) {
-        if (!cardObj.pos) return;
-        const originalX = cardObj.pos.x;
-        // Shake animation for illegal move
-        k.tween(0, 1, 0.05, (t) => {
-          if (cardObj && cardObj.pos) {
-            cardObj.pos.x = originalX + 10 * t;
-          }
-        }).onEnd(() => {
-          k.tween(0, 1, 0.1, (t) => {
-            if (cardObj && cardObj.pos) {
-              cardObj.pos.x = originalX + 10 - 20 * t;
-            }
-          }).onEnd(() => {
-            k.tween(0, 1, 0.05, (t) => {
-              if (cardObj && cardObj.pos) {
-                cardObj.pos.x = originalX - 10 + 10 * t;
-              }
-            });
-          });
-        });
-        return;
-      }
-
-      const now = Date.now();
-      if (now - lastClickTime < DOUBLE_CLICK_THRESHOLD) {
-        sceneState.selectedCard = null;
-        playCardToTrick(k, sceneState, cardObj, Player.Forehand, () => {
-          processFlow();
-        });
-        lastClickTime = 0;
-        return;
-      }
-      lastClickTime = now;
-
-      if (sceneState.selectedCard && sceneState.selectedCard !== cardObj) {
-        sceneState.selectedCard.selected = false;
-        updateCardHoverState(k, sceneState.selectedCard, false, false);
-        sceneState.selectedCard.z =
-          LAYERS.playerCards +
-          sceneState.playerCardObjects.indexOf(sceneState.selectedCard);
-      }
-
-      cardObj.selected = !cardObj.selected;
-      updateCardHoverState(k, cardObj, false, cardObj.selected);
-
-      if (cardObj.selected) {
-        sceneState.selectedCard = cardObj;
-        cardObj.z = LAYERS.selectedCard;
-      } else {
-        sceneState.selectedCard = null;
-        cardObj.z =
-          LAYERS.playerCards + sceneState.playerCardObjects.indexOf(cardObj);
-      }
-
-      updateUI();
-    });
-  }
-}
-
-/**
- * Creates the main game scene.
+ * Creates the game scene.
  */
 export function createGameScene(k: KAPLAYCtx): void {
-  k.scene("game", async () => {
+  k.scene("game", () => {
     // Initialize game store
     const store = useGameStore.getState();
     store.initGame();
     store.dealCards();
 
-    // Get all cards for sprite loading (in deal order)
+    // Create scene state
+    const sceneState: SceneState = createInitialSceneState();
+
+    // Get all cards for sprite loading
     const allCards = [
       ...store.players[Player.Forehand].hand.cards,
       ...store.players[Player.Middlehand].hand.cards,
@@ -913,57 +81,35 @@ export function createGameScene(k: KAPLAYCtx): void {
       ...store.skat,
     ];
 
-    // Scene state
-    const sceneState: SceneState = {
-      playerCardObjects: [],
-      opponentCardObjects: [[], []],
-      skatCardObjects: [],
-      trickCardObjects: [null, null, null],
-      selectedCard: null,
-      currentPlayerText: null,
-      trickCountText: null,
-      pointsText: null,
-      gameInfoText: null,
-      playButton: null,
-      dropZone: null,
-      dragState: {
-        isDragging: false,
-        draggedCard: null,
-        startPos: { x: 0, y: 0 },
-        offset: { x: 0, y: 0 },
-      },
-    };
-
-    // Load all card sprites
-    await loadCardSprites(k, allCards);
+    // Load card sprites
+    loadCardSprites(k, allCards);
 
     // Draw table background
     k.add([
       k.rect(CANVAS_WIDTH, CANVAS_HEIGHT),
       k.pos(0, 0),
-      k.color(34, 85, 51),
-      k.z(LAYERS.background),
-    ]);
-
-    // Draw table border
-    k.add([
-      k.rect(CANVAS_WIDTH - 40, CANVAS_HEIGHT - 40),
-      k.pos(20, 20),
-      k.outline(3, k.rgb(25, 65, 40)),
-      k.color(39, 95, 58),
+      k.color(34, 139, 34), // Forest green
       k.z(LAYERS.table),
     ]);
 
-    // Create drop zone for drag-and-drop (invisible until dragging)
+    // Add table border
+    k.add([
+      k.rect(CANVAS_WIDTH - 20, CANVAS_HEIGHT - 20),
+      k.pos(10, 10),
+      k.color(0, 100, 0), // Darker green
+      k.outline(4, k.rgb(139, 69, 19)),
+      k.z(LAYERS.table),
+    ]);
+
+    // Create drop zone for card playing
     const dropZoneSize = 150;
     sceneState.dropZone = k.add([
       k.rect(dropZoneSize, dropZoneSize),
       k.pos(TABLE_POSITIONS.center.x, TABLE_POSITIONS.center.y),
       k.anchor("center"),
-      k.color(76, 175, 80),
+      k.color(255, 255, 255),
       k.opacity(0),
-      k.z(LAYERS.table + 1),
-      k.area(),
+      k.z(LAYERS.dropZone),
     ]);
 
     // Helper function to check if point is in drop zone
@@ -1018,7 +164,10 @@ export function createGameScene(k: KAPLAYCtx): void {
         // Check if dropped in valid zone and is legal move
         if (isInDropZone(mousePos.x, mousePos.y) && card.isLegalMove) {
           const currentState = useGameStore.getState();
-          if (currentState.currentPlayer === Player.Forehand) {
+          if (
+            currentState.currentPlayer === Player.Forehand &&
+            currentState.gameState === GameState.TrickPlaying
+          ) {
             // Play the card
             sceneState.dragState.isDragging = false;
             sceneState.dragState.draggedCard = null;
@@ -1052,77 +201,7 @@ export function createGameScene(k: KAPLAYCtx): void {
     });
 
     // Create UI elements
-    const labelStyle = { size: 14, font: "Arial" };
-
-    // Player labels
-    k.add([
-      k.text("You (Forehand)", labelStyle),
-      k.pos(TABLE_POSITIONS.players.forehand.x, CANVAS_HEIGHT - 20),
-      k.anchor("center"),
-      k.color(255, 255, 255),
-      k.z(LAYERS.ui),
-    ]);
-
-    k.add([
-      k.text("Opponent 1", labelStyle),
-      k.pos(
-        TABLE_POSITIONS.players.middlehand.x,
-        TABLE_POSITIONS.players.middlehand.y + 80
-      ),
-      k.anchor("center"),
-      k.color(255, 255, 255),
-      k.z(LAYERS.ui),
-    ]);
-
-    k.add([
-      k.text("Opponent 2", labelStyle),
-      k.pos(
-        TABLE_POSITIONS.players.rearhand.x,
-        TABLE_POSITIONS.players.rearhand.y + 80
-      ),
-      k.anchor("center"),
-      k.color(255, 255, 255),
-      k.z(LAYERS.ui),
-    ]);
-
-    // Game info text
-    sceneState.gameInfoText = k.add([
-      k.text("Grand Game - Select a card and click Play", {
-        size: 16,
-        font: "Arial",
-      }),
-      k.pos(CANVAS_WIDTH / 2, 15),
-      k.anchor("center"),
-      k.color(255, 255, 200),
-      k.z(LAYERS.ui),
-    ]) as UITextObj;
-
-    // Current player indicator
-    sceneState.currentPlayerText = k.add([
-      k.text("Your Turn", { size: 14, font: "Arial" }),
-      k.pos(CANVAS_WIDTH / 2, 40),
-      k.anchor("center"),
-      k.color(76, 175, 80),
-      k.z(LAYERS.ui),
-    ]) as UITextObj;
-
-    // Trick count
-    sceneState.trickCountText = k.add([
-      k.text("Trick: 1/10", { size: 12, font: "Arial" }),
-      k.pos(80, 15),
-      k.anchor("center"),
-      k.color(200, 200, 200),
-      k.z(LAYERS.ui),
-    ]) as UITextObj;
-
-    // Points display
-    sceneState.pointsText = k.add([
-      k.text("Points: 0", { size: 12, font: "Arial" }),
-      k.pos(80, 35),
-      k.anchor("center"),
-      k.color(200, 200, 200),
-      k.z(LAYERS.ui),
-    ]) as UITextObj;
+    createUIElements(k, sceneState);
 
     // Update UI function
     function updateUI(): void {
@@ -1142,8 +221,30 @@ export function createGameScene(k: KAPLAYCtx): void {
             : k.rgb(255, 193, 7);
       }
 
+      // Update game info text based on game state
+      if (sceneState.gameInfoText) {
+        if (currentState.gameState === GameState.Bidding) {
+          const bidText =
+            currentState.currentBid > 0
+              ? `Current Bid: ${currentState.currentBid}`
+              : "Bidding Phase";
+          sceneState.gameInfoText.text = bidText;
+        } else if (currentState.gameState === GameState.PickingUpSkat) {
+          sceneState.gameInfoText.text = "Pick up Skat or Play Hand?";
+        } else if (currentState.gameState === GameState.Declaring) {
+          sceneState.gameInfoText.text = "Declare Game Type";
+        } else if (currentState.gameState === GameState.TrickPlaying) {
+          const gameTypeName = GameType[currentState.gameType] || "Grand";
+          sceneState.gameInfoText.text = `${gameTypeName} Game`;
+        }
+      }
+
       if (sceneState.trickCountText) {
-        sceneState.trickCountText.text = `Trick: ${currentState.trickNumber + 1}/10`;
+        if (currentState.gameState === GameState.TrickPlaying) {
+          sceneState.trickCountText.text = `Trick: ${currentState.trickNumber + 1}/10`;
+        } else {
+          sceneState.trickCountText.text = "";
+        }
       }
 
       if (sceneState.pointsText) {
@@ -1151,177 +252,351 @@ export function createGameScene(k: KAPLAYCtx): void {
         sceneState.pointsText.text = `Points: ${points}`;
       }
 
-      // Update play button visibility
+      // Update player label highlighting for active player
+      for (const player of [
+        Player.Forehand,
+        Player.Middlehand,
+        Player.Rearhand,
+      ]) {
+        const label = sceneState.playerLabels[player];
+        if (label) {
+          if (player === currentState.currentPlayer) {
+            // Active player - bright gold color
+            label.color = k.rgb(255, 215, 0);
+          } else if (player === currentState.declarer) {
+            // Declarer (not active) - green tint
+            label.color = k.rgb(144, 238, 144);
+          } else {
+            // Inactive player - normal white
+            label.color = k.rgb(200, 200, 200);
+          }
+        }
+      }
+
+      // Update play button visibility (only during trick playing)
       if (sceneState.playButton) {
         sceneState.playButton.hidden =
+          currentState.gameState !== GameState.TrickPlaying ||
           currentState.currentPlayer !== Player.Forehand ||
           sceneState.selectedCard === null;
       }
     }
 
     // Create Play button
-    sceneState.playButton = k.add([
-      k.rect(80, 30),
-      k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 140),
-      k.anchor("center"),
-      k.color(76, 175, 80),
-      k.area(),
-      k.z(LAYERS.ui),
-    ]);
+    createPlayButton(k, sceneState, updateUI);
 
-    k.add([
-      k.text("Play", { size: 14, font: "Arial" }),
-      k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 140),
-      k.anchor("center"),
-      k.color(255, 255, 255),
-      k.z(LAYERS.ui + 1),
-    ]);
+    // Start dealing animation
+    startDealingAnimation(k, sceneState, store, updateUI);
+  });
+}
 
-    sceneState.playButton.hidden = true;
+/**
+ * Creates UI elements (labels, text displays).
+ */
+function createUIElements(k: KAPLAYCtx, sceneState: SceneState): void {
+  const labelStyle = { size: 14, font: "Arial" };
 
-    sceneState.playButton.onClick(() => {
-      const currentState = useGameStore.getState();
-      if (
-        sceneState.selectedCard &&
-        sceneState.selectedCard.isLegalMove &&
-        currentState.currentPlayer === Player.Forehand
-      ) {
-        const cardToPlay = sceneState.selectedCard;
-        sceneState.selectedCard = null;
+  // Player labels - stored for highlighting active player
+  sceneState.playerLabels[Player.Forehand] = k.add([
+    k.text("You (Forehand)", labelStyle),
+    k.pos(TABLE_POSITIONS.players.forehand.x, CANVAS_HEIGHT - 20),
+    k.anchor("center"),
+    k.color(255, 255, 255),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
 
-        playCardToTrick(k, sceneState, cardToPlay, Player.Forehand, () => {
-          processGameFlow(k, sceneState, updateUI);
-        });
+  sceneState.playerLabels[Player.Middlehand] = k.add([
+    k.text("Opponent 1", labelStyle),
+    k.pos(
+      TABLE_POSITIONS.players.middlehand.x,
+      TABLE_POSITIONS.players.middlehand.y + 80
+    ),
+    k.anchor("center"),
+    k.color(255, 255, 255),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+
+  sceneState.playerLabels[Player.Rearhand] = k.add([
+    k.text("Opponent 2", labelStyle),
+    k.pos(
+      TABLE_POSITIONS.players.rearhand.x,
+      TABLE_POSITIONS.players.rearhand.y + 80
+    ),
+    k.anchor("center"),
+    k.color(255, 255, 255),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+
+  // Game info text
+  sceneState.gameInfoText = k.add([
+    k.text("Dealing cards...", { size: 16, font: "Arial" }),
+    k.pos(CANVAS_WIDTH / 2, 15),
+    k.anchor("center"),
+    k.color(255, 255, 200),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+
+  // Current player indicator
+  sceneState.currentPlayerText = k.add([
+    k.text("", { size: 14, font: "Arial" }),
+    k.pos(CANVAS_WIDTH / 2, 40),
+    k.anchor("center"),
+    k.color(76, 175, 80),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+
+  // Trick count
+  sceneState.trickCountText = k.add([
+    k.text("", { size: 12, font: "Arial" }),
+    k.pos(80, 15),
+    k.anchor("center"),
+    k.color(200, 200, 200),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+
+  // Points display
+  sceneState.pointsText = k.add([
+    k.text("Points: 0", { size: 12, font: "Arial" }),
+    k.pos(80, 35),
+    k.anchor("center"),
+    k.color(200, 200, 200),
+    k.z(LAYERS.ui),
+  ]) as UITextObj;
+}
+
+/**
+ * Creates the Play button.
+ */
+function createPlayButton(
+  k: KAPLAYCtx,
+  sceneState: SceneState,
+  updateUI: () => void
+): void {
+  sceneState.playButton = k.add([
+    k.rect(80, 30),
+    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 140),
+    k.anchor("center"),
+    k.color(76, 175, 80),
+    k.area(),
+    k.z(LAYERS.ui),
+  ]);
+
+  k.add([
+    k.text("Play", { size: 14, font: "Arial" }),
+    k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 140),
+    k.anchor("center"),
+    k.color(255, 255, 255),
+    k.z(LAYERS.ui + 1),
+  ]);
+
+  sceneState.playButton.hidden = true;
+
+  sceneState.playButton.onClick(() => {
+    const currentState = useGameStore.getState();
+    if (
+      sceneState.selectedCard &&
+      currentState.currentPlayer === Player.Forehand &&
+      currentState.gameState === GameState.TrickPlaying &&
+      sceneState.selectedCard.isLegalMove
+    ) {
+      const cardToPlay = sceneState.selectedCard;
+      sceneState.selectedCard = null;
+      cardToPlay.selected = false;
+
+      playCardToTrick(k, sceneState, cardToPlay, Player.Forehand, () => {
+        processGameFlow(k, sceneState, updateUI);
+      });
+    }
+  });
+}
+
+/**
+ * Sets up card click interactions.
+ */
+function setupCardInteractions(
+  k: KAPLAYCtx,
+  sceneState: SceneState,
+  updateUI: () => void
+): void {
+  for (const cardObj of sceneState.playerCardObjects) {
+    // Hover effects
+    cardObj.onHover(() => {
+      if (!sceneState.dragState.isDragging) {
+        updateCardHoverState(k, cardObj, true, cardObj.selected);
       }
     });
 
-    // Calculate final positions for dealing
-    const playerHand = store.players[Player.Forehand].hand.cards;
-    // Ensure we have positions for 10 cards (the standard hand size)
-    const cardCount = playerHand.length > 0 ? playerHand.length : 10;
-    const handPositions = calculateHandPositions(
-      cardCount,
-      TABLE_POSITIONS.players.forehand.x,
-      HAND_SETTINGS.playerHandY
+    cardObj.onHoverEnd(() => {
+      if (!sceneState.dragState.isDragging) {
+        updateCardHoverState(k, cardObj, false, cardObj.selected);
+      }
+    });
+
+    // Click to select
+    cardObj.onClick(() => {
+      const currentState = useGameStore.getState();
+
+      // Only allow selection during trick playing and when it's player's turn
+      if (
+        currentState.gameState !== GameState.TrickPlaying ||
+        currentState.currentPlayer !== Player.Forehand
+      ) {
+        return;
+      }
+
+      // Deselect previously selected card
+      if (sceneState.selectedCard && sceneState.selectedCard !== cardObj) {
+        sceneState.selectedCard.selected = false;
+        updateCardHoverState(k, sceneState.selectedCard, false, false);
+      }
+
+      // Toggle selection
+      cardObj.selected = !cardObj.selected;
+      sceneState.selectedCard = cardObj.selected ? cardObj : null;
+
+      updateCardHoverState(k, cardObj, false, cardObj.selected);
+      updateUI();
+    });
+
+    // Drag to play
+    cardObj.onMouseDown(() => {
+      const currentState = useGameStore.getState();
+
+      if (
+        currentState.gameState !== GameState.TrickPlaying ||
+        currentState.currentPlayer !== Player.Forehand
+      ) {
+        return;
+      }
+
+      if (cardObj.pos) {
+        sceneState.dragState.isDragging = true;
+        sceneState.dragState.draggedCard = cardObj;
+        sceneState.dragState.startPos = { x: cardObj.pos.x, y: cardObj.pos.y };
+
+        const mousePos = k.mousePos();
+        sceneState.dragState.offset = {
+          x: mousePos.x - cardObj.pos.x,
+          y: mousePos.y - cardObj.pos.y,
+        };
+
+        // Bring to front
+        cardObj.z = LAYERS.draggedCard;
+      }
+    });
+  }
+}
+
+/**
+ * Starts the card dealing animation.
+ */
+function startDealingAnimation(
+  k: KAPLAYCtx,
+  sceneState: SceneState,
+  store: ReturnType<typeof useGameStore.getState>,
+  updateUI: () => void
+): void {
+  // Create deck at center
+  const deckCards: CardGameObj[] = [];
+  for (let i = 0; i < 32; i++) {
+    const card = createCardObject(
+      k,
+      store.players[Player.Forehand].hand.cards[i % 10] ||
+        store.skat[i % 2] ||
+        store.players[Player.Forehand].hand.cards[0],
+      TABLE_POSITIONS.center.x,
+      TABLE_POSITIONS.center.y - i * 0.5,
+      false,
+      LAYERS.deck + i,
+      "skat"
     );
+    deckCards.push(card);
+  }
 
-    // Create status text for animations
-    const statusText = k.add([
-      k.text("Shuffling...", { size: 20, font: "Arial" }),
-      k.pos(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80),
-      k.anchor("center"),
-      k.color(255, 255, 200),
-      k.z(LAYERS.ui + 5),
-    ]);
+  // Define deal order based on traditional Skat dealing
+  type DealData = {
+    owner: Player | "skat";
+    cards: Card[];
+  };
 
-    // Create all 32 cards at center as a deck (face down)
-    const deckX = CANVAS_WIDTH / 2;
-    const deckY = CANVAS_HEIGHT / 2;
-    const deckCards: CardGameObj[] = [];
-
-    // Build deck in the order they will be dealt
-    const dealOrderCards: { card: Card; owner: Player | "skat" }[] = [];
-
-    // Traditional Skat dealing order: 3-3-3-skat(2)-4-4-4-3-3-3
-    const playerCards = [
-      store.players[Player.Forehand].hand.cards,
-      store.players[Player.Middlehand].hand.cards,
-      store.players[Player.Rearhand].hand.cards,
-    ];
-
-    // First round: 3 cards each
-    for (let p = 0; p < 3; p++) {
-      for (let i = 0; i < 3; i++) {
-        dealOrderCards.push({
-          card: playerCards[p][i],
-          owner: p as Player,
-        });
-      }
-    }
+  const dealOrder: DealData[] = [
+    // Round 1: 3 cards each
+    {
+      owner: Player.Forehand,
+      cards: store.players[Player.Forehand].hand.cards.slice(0, 3),
+    },
+    {
+      owner: Player.Middlehand,
+      cards: store.players[Player.Middlehand].hand.cards.slice(0, 3),
+    },
+    {
+      owner: Player.Rearhand,
+      cards: store.players[Player.Rearhand].hand.cards.slice(0, 3),
+    },
     // Skat: 2 cards
-    for (let i = 0; i < 2; i++) {
-      dealOrderCards.push({ card: store.skat[i], owner: "skat" });
-    }
-    // Second round: 4 cards each
-    for (let p = 0; p < 3; p++) {
-      for (let i = 3; i < 7; i++) {
-        dealOrderCards.push({
-          card: playerCards[p][i],
-          owner: p as Player,
-        });
-      }
-    }
-    // Third round: 3 cards each
-    for (let p = 0; p < 3; p++) {
-      for (let i = 7; i < 10; i++) {
-        dealOrderCards.push({
-          card: playerCards[p][i],
-          owner: p as Player,
-        });
-      }
-    }
+    { owner: "skat", cards: store.skat },
+    // Round 2: 4 cards each
+    {
+      owner: Player.Forehand,
+      cards: store.players[Player.Forehand].hand.cards.slice(3, 7),
+    },
+    {
+      owner: Player.Middlehand,
+      cards: store.players[Player.Middlehand].hand.cards.slice(3, 7),
+    },
+    {
+      owner: Player.Rearhand,
+      cards: store.players[Player.Rearhand].hand.cards.slice(3, 7),
+    },
+    // Round 3: 3 cards each
+    {
+      owner: Player.Forehand,
+      cards: store.players[Player.Forehand].hand.cards.slice(7, 10),
+    },
+    {
+      owner: Player.Middlehand,
+      cards: store.players[Player.Middlehand].hand.cards.slice(7, 10),
+    },
+    {
+      owner: Player.Rearhand,
+      cards: store.players[Player.Rearhand].hand.cards.slice(7, 10),
+    },
+  ];
 
-    // Create card objects at deck position
-    for (let i = 0; i < dealOrderCards.length; i++) {
-      const { card, owner } = dealOrderCards[i];
-      const cardObj = createCardObject(
-        k,
-        card,
-        deckX,
-        deckY - i * 0.5,
-        false,
-        LAYERS.skat + i,
-        owner
-      );
-      deckCards.push(cardObj);
+  // Flatten for card-by-card dealing
+  const dealOrderCards: { owner: Player | "skat"; card: Card }[] = [];
+  for (const deal of dealOrder) {
+    for (const card of deal.cards) {
+      dealOrderCards.push({ owner: deal.owner, card });
     }
+  }
 
-    // Animation sequence: Shuffle -> Deal -> Flip player cards -> Start game
-    animateShuffle(k, deckCards, deckX, deckY, () => {
-      statusText.text = "Dealing...";
-
-      // Prepare positions for dealing animation
-      const playerCardCounts = [0, 0, 0];
-      let skatCount = 0;
-
-      // Custom dealing animation
+  // Shuffle animation
+  animateShuffle(
+    k,
+    deckCards,
+    TABLE_POSITIONS.center.x,
+    TABLE_POSITIONS.center.y,
+    () => {
+      // Start dealing
       let cardIndex = 0;
 
       function dealNextCard(): void {
-        if (cardIndex >= deckCards.length || deckCards.length === 0) {
-          // Dealing complete - flip player cards and start game
-          if (statusText) {
-            statusText.text = "";
-            statusText.destroy();
+        if (cardIndex >= dealOrderCards.length) {
+          // Clean up deck cards
+          for (const card of deckCards) {
+            if (card && card.destroy) {
+              card.destroy();
+            }
           }
 
-          // Flip player's cards face up
-          let flipped = 0;
-          for (const cardObj of sceneState.playerCardObjects) {
-            flipCard(k, cardObj, () => {
-              flipped++;
-              if (flipped === sceneState.playerCardObjects.length) {
-                // All cards flipped - set up interactions and start
-                store.setGameState(GameState.TrickPlaying);
-                setupCardInteractions(k, sceneState, updateUI);
-
-                // Add skat click handlers
-                for (const skatCard of sceneState.skatCardObjects) {
-                  skatCard.onClick(() => {
-                    flipCard(k, skatCard);
-                  });
-                }
-
-                updateLegalMoveHighlighting(k, sceneState, store);
-                updateUI();
-              }
-            });
-          }
+          // Dealing complete - create final hand cards
+          createFinalHandCards(k, sceneState, store, updateUI);
           return;
         }
 
-        const cardObj = deckCards[cardIndex];
         const dealData = dealOrderCards[cardIndex];
+        const cardObj = deckCards[cardIndex];
 
         if (!cardObj || !dealData) {
           cardIndex++;
@@ -1330,91 +605,268 @@ export function createGameScene(k: KAPLAYCtx): void {
         }
 
         const owner = dealData.owner;
-
         let targetX: number;
         let targetY: number;
         let targetAngle = 0;
-        let targetScale = 1;
 
-        if (owner === "skat") {
-          targetX = TABLE_POSITIONS.skat.x + (skatCount - 0.5) * 30;
-          targetY = TABLE_POSITIONS.skat.y;
-          sceneState.skatCardObjects.push(cardObj);
-          skatCount++;
-        } else if (owner === Player.Forehand) {
-          const posIndex = playerCardCounts[0];
-          if (posIndex >= handPositions.length) {
-            // Safety: skip if out of bounds
-            cardIndex++;
-            dealNextCard();
-            return;
-          }
-          const pos = handPositions[posIndex];
-          if (!pos) {
-            cardIndex++;
-            dealNextCard();
-            return;
-          }
+        if (owner === Player.Forehand) {
+          const playerCards = sceneState.playerCardObjects.length;
+          const positions = calculateHandPositions(
+            playerCards + 1,
+            TABLE_POSITIONS.players.forehand.x,
+            HAND_SETTINGS.playerHandY
+          );
+          const pos = positions[playerCards];
           targetX = pos.x;
           targetY = pos.y;
-          cardObj.baseY = targetY;
-          sceneState.playerCardObjects.push(cardObj);
-          playerCardCounts[0]++;
+        } else if (owner === Player.Middlehand) {
+          const opponentCards = sceneState.opponentCardObjects[0].length;
+          const positions = calculateHandPositions(
+            opponentCards + 1,
+            TABLE_POSITIONS.players.middlehand.x,
+            TABLE_POSITIONS.players.middlehand.y
+          );
+          const pos = positions[opponentCards];
+          targetX = pos.x;
+          targetY = pos.y;
+          targetAngle = 90;
+        } else if (owner === Player.Rearhand) {
+          const opponentCards = sceneState.opponentCardObjects[1].length;
+          const positions = calculateHandPositions(
+            opponentCards + 1,
+            TABLE_POSITIONS.players.rearhand.x,
+            TABLE_POSITIONS.players.rearhand.y
+          );
+          const pos = positions[opponentCards];
+          targetX = pos.x;
+          targetY = pos.y;
+          targetAngle = -90;
         } else {
-          const oppIndex = owner === Player.Middlehand ? 0 : 1;
-          targetX =
-            owner === Player.Middlehand
-              ? TABLE_POSITIONS.players.middlehand.x
-              : TABLE_POSITIONS.players.rearhand.x;
-          targetY =
-            (owner === Player.Middlehand
-              ? TABLE_POSITIONS.players.middlehand.y
-              : TABLE_POSITIONS.players.rearhand.y) -
-            100 +
-            playerCardCounts[owner] * 18;
-          targetAngle = owner === Player.Middlehand ? 90 : -90;
-          targetScale = 0.6;
-          sceneState.opponentCardObjects[oppIndex].push(cardObj);
-          playerCardCounts[owner]++;
+          // Skat
+          const skatIndex = sceneState.skatCardObjects.length;
+          targetX = TABLE_POSITIONS.skat.x + skatIndex * 30;
+          targetY = TABLE_POSITIONS.skat.y;
         }
 
-        cardObj.z = LAYERS.playerCards + cardIndex;
+        // Update card data
+        cardObj.cardData = dealData.card;
+        cardObj.owner = owner;
+        cardObj.angle = targetAngle;
 
-        if (!cardObj || !cardObj.pos) {
-          cardIndex++;
-          dealNextCard();
-          return;
-        }
-
-        const startX = cardObj.pos.x;
-        const startY = cardObj.pos.y;
-
-        k.tween(
-          0,
-          1,
-          ANIMATION.deal,
-          (t) => {
-            if (cardObj && cardObj.pos) {
-              cardObj.pos.x = startX + (targetX - startX) * t;
-              cardObj.pos.y = startY + (targetY - startY) * t;
-              cardObj.angle = targetAngle * t;
-              cardObj.scale = k.vec2(
-                1 + (targetScale - 1) * t,
-                1 + (targetScale - 1) * t
-              );
+        // Animate to position
+        animateCardMove(
+          k,
+          cardObj,
+          targetX,
+          targetY,
+          ANIMATION.cardDeal,
+          () => {
+            // Add to appropriate array
+            if (owner === Player.Forehand) {
+              sceneState.playerCardObjects.push(cardObj);
+            } else if (owner === Player.Middlehand) {
+              sceneState.opponentCardObjects[0].push(cardObj);
+            } else if (owner === Player.Rearhand) {
+              sceneState.opponentCardObjects[1].push(cardObj);
+            } else {
+              sceneState.skatCardObjects.push(cardObj);
             }
-          },
-          k.easings.easeOutQuad
-        ).onEnd(() => {
-          if (cardObj) {
-            cardObj.baseY = targetY;
+
+            cardIndex++;
+            k.wait(ANIMATION.dealDelay, dealNextCard);
           }
-          cardIndex++;
-          dealNextCard();
-        });
+        );
       }
 
       dealNextCard();
-    });
+    }
+  );
+}
+
+/**
+ * Creates the final hand cards after dealing is complete.
+ */
+function createFinalHandCards(
+  k: KAPLAYCtx,
+  sceneState: SceneState,
+  store: ReturnType<typeof useGameStore.getState>,
+  updateUI: () => void
+): void {
+  // Clear old card objects
+  for (const card of sceneState.playerCardObjects) {
+    if (card && card.destroy) card.destroy();
+  }
+  for (const cards of sceneState.opponentCardObjects) {
+    for (const card of cards) {
+      if (card && card.destroy) card.destroy();
+    }
+  }
+  for (const card of sceneState.skatCardObjects) {
+    if (card && card.destroy) card.destroy();
+  }
+
+  sceneState.playerCardObjects = [];
+  sceneState.opponentCardObjects = [[], []];
+  sceneState.skatCardObjects = [];
+
+  // Sort player cards
+  const sortedPlayerCards = sortForGame(
+    store.players[Player.Forehand].hand.cards,
+    store.gameType
+  );
+
+  // Create player cards (face up, sorted)
+  const playerPositions = calculateHandPositions(
+    sortedPlayerCards.length,
+    TABLE_POSITIONS.players.forehand.x,
+    HAND_SETTINGS.playerHandY
+  );
+
+  for (let i = 0; i < sortedPlayerCards.length; i++) {
+    const card = sortedPlayerCards[i];
+    const pos = playerPositions[i];
+    const cardObj = createCardObject(
+      k,
+      card,
+      pos.x,
+      pos.y,
+      true,
+      LAYERS.playerCards + i,
+      Player.Forehand
+    );
+    cardObj.baseY = pos.y;
+    sceneState.playerCardObjects.push(cardObj);
+  }
+
+  // Create opponent cards (face down)
+  const opp1Cards = store.players[Player.Middlehand].hand.cards;
+  const opp1Positions = calculateHandPositions(
+    opp1Cards.length,
+    TABLE_POSITIONS.players.middlehand.x,
+    TABLE_POSITIONS.players.middlehand.y
+  );
+  for (let i = 0; i < opp1Cards.length; i++) {
+    const card = opp1Cards[i];
+    const pos = opp1Positions[i];
+    const cardObj = createCardObject(
+      k,
+      card,
+      pos.x,
+      pos.y,
+      false,
+      LAYERS.opponentCards + i,
+      Player.Middlehand
+    );
+    cardObj.angle = 90;
+    sceneState.opponentCardObjects[0].push(cardObj);
+  }
+
+  const opp2Cards = store.players[Player.Rearhand].hand.cards;
+  const opp2Positions = calculateHandPositions(
+    opp2Cards.length,
+    TABLE_POSITIONS.players.rearhand.x,
+    TABLE_POSITIONS.players.rearhand.y
+  );
+  for (let i = 0; i < opp2Cards.length; i++) {
+    const card = opp2Cards[i];
+    const pos = opp2Positions[i];
+    const cardObj = createCardObject(
+      k,
+      card,
+      pos.x,
+      pos.y,
+      false,
+      LAYERS.opponentCards + i,
+      Player.Rearhand
+    );
+    cardObj.angle = -90;
+    sceneState.opponentCardObjects[1].push(cardObj);
+  }
+
+  // Create skat cards (face down)
+  for (let i = 0; i < store.skat.length; i++) {
+    const card = store.skat[i];
+    const cardObj = createCardObject(
+      k,
+      card,
+      TABLE_POSITIONS.skat.x + i * 30,
+      TABLE_POSITIONS.skat.y,
+      false,
+      LAYERS.skat + i,
+      "skat"
+    );
+    sceneState.skatCardObjects.push(cardObj);
+  }
+
+  console.log(
+    `[GameScene] Created ${sceneState.playerCardObjects.length} sorted face-up player cards`
+  );
+
+  // Start bidding phase instead of trick playing
+  store.startBidding();
+
+  // Set up card interactions for later use
+  setupCardInteractions(k, sceneState, updateUI);
+
+  // Subscribe to store changes to trigger AI bidding and skat handling
+  let lastCurrentPlayer = store.currentPlayer;
+  let lastBiddingResult = store.bidding.result;
+  let lastGameState = store.gameState;
+  useGameStore.subscribe((state) => {
+    const gameStateChanged = state.gameState !== lastGameState;
+    lastGameState = state.gameState;
+
+    // Check if we're in bidding phase and something changed
+    if (state.gameState === GameState.Bidding) {
+      const playerChanged = state.currentPlayer !== lastCurrentPlayer;
+      const resultChanged = state.bidding.result !== lastBiddingResult;
+
+      if (playerChanged || resultChanged) {
+        lastCurrentPlayer = state.currentPlayer;
+        lastBiddingResult = state.bidding.result;
+
+        // Trigger AI bidding if it's not the human's turn
+        if (
+          state.currentPlayer !== Player.Forehand &&
+          state.bidding.result === BiddingResult.InProgress
+        ) {
+          k.wait(AI_BIDDING_DELAY / 1000, () => {
+            performAIBiddingAction(k, sceneState, updateUI);
+          });
+        } else if (state.bidding.result !== BiddingResult.InProgress) {
+          handleBiddingComplete(k, sceneState, updateUI);
+        }
+      }
+    }
+
+    // Handle skat phase transitions
+    if (gameStateChanged) {
+      if (state.gameState === GameState.PickingUpSkat) {
+        // Skat pickup phase - AI handling is triggered by biddingFlow
+        // Human handling will be done via React UI
+        updateUI();
+      } else if (state.gameState === GameState.Declaring) {
+        // Declaring phase - update UI
+        updateUI();
+      } else if (state.gameState === GameState.TrickPlaying) {
+        // Trick playing started - re-setup card interactions
+        setupCardInteractions(k, sceneState, updateUI);
+        updateLegalMoveHighlighting(k, sceneState, state);
+        updateUI();
+      }
+    }
   });
+
+  // Process initial AI bidding if needed
+  processAIBidding(k, sceneState, updateUI);
+
+  // Add skat click handlers
+  for (const skatCard of sceneState.skatCardObjects) {
+    skatCard.onClick(() => {
+      flipCard(k, skatCard);
+    });
+  }
+
+  updateLegalMoveHighlighting(k, sceneState, store);
+  updateUI();
 }
