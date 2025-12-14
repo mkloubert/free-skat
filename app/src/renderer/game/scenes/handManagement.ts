@@ -29,7 +29,7 @@ import type { CardGameObj, SceneState } from "./types";
 import { animateCardMove } from "./cardAnimations";
 
 /**
- * Calculates hand card positions with fan layout.
+ * Calculates hand card positions with horizontal fan layout.
  */
 export function calculateHandPositions(
   cardCount: number,
@@ -44,6 +44,29 @@ export function calculateHandPositions(
     positions.push({
       x: startX + i * HAND_SETTINGS.cardOverlap,
       y,
+    });
+  }
+
+  return positions;
+}
+
+/**
+ * Calculates hand card positions with vertical layout (for opponents on sides).
+ * Cards are stacked vertically around the center point.
+ */
+export function calculateVerticalHandPositions(
+  cardCount: number,
+  x: number,
+  centerY: number
+): { x: number; y: number }[] {
+  const positions: { x: number; y: number }[] = [];
+  const totalHeight = (cardCount - 1) * HAND_SETTINGS.cardOverlap + CARD_WIDTH;
+  const startY = centerY - totalHeight / 2 + CARD_WIDTH / 2;
+
+  for (let i = 0; i < cardCount; i++) {
+    positions.push({
+      x,
+      y: startY + i * HAND_SETTINGS.cardOverlap,
     });
   }
 
@@ -144,16 +167,18 @@ export function repositionPlayerHand(
 
 /**
  * Repositions opponent hand cards after a card is played.
+ * Uses vertical positioning for side opponents.
  */
 export function repositionOpponentHand(
   k: KAPLAYCtx,
   opponentCards: CardGameObj[],
-  centerX: number,
-  y: number,
+  x: number,
+  centerY: number,
   rotation: number
 ): void {
   const cardCount = opponentCards.length;
-  const positions = calculateHandPositions(cardCount, centerX, y);
+  // Use vertical positioning for side opponents
+  const positions = calculateVerticalHandPositions(cardCount, x, centerY);
 
   for (let i = 0; i < opponentCards.length; i++) {
     const cardObj = opponentCards[i];

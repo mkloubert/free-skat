@@ -76,6 +76,25 @@ export function performAIBiddingAction(
   updateUI: () => void
 ): void {
   const store = useGameStore.getState();
+
+  // Check if bidding is still in progress before acting
+  if (store.gameState !== GameState.Bidding) {
+    console.log("[AI Bidding] Game state is not Bidding, skipping AI action");
+    return;
+  }
+
+  if (store.bidding.result !== BiddingResult.InProgress) {
+    console.log("[AI Bidding] Bidding already complete, skipping AI action");
+    handleBiddingComplete(k, sceneState, updateUI);
+    return;
+  }
+
+  // Check if it's actually an AI's turn (not human)
+  if (store.currentPlayer === Player.Forehand) {
+    console.log("[AI Bidding] It's human's turn, skipping AI action");
+    return;
+  }
+
   const aiPlayer = store.currentPlayer;
 
   // Get AI's hand

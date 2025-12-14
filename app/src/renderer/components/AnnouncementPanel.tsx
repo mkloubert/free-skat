@@ -108,15 +108,10 @@ export function AnnouncementPanel({
   const [schwarzAnnounced, setSchwarzAnnounced] = useState(false);
   const [ouvert, setOuvert] = useState(false);
 
-  // Only show when it's time to declare and human is declarer
-  if (gameState !== GameState.Declaring || declarer !== humanPlayer) {
-    return null;
-  }
-
   // Ensure hand game is set correctly when forced
   const effectiveHandGame = isHandGameForced || handGame;
 
-  // Calculate estimated game value
+  // Calculate estimated game value - must be before early return
   const estimatedValue = useMemo(() => {
     const baseValue = getGameTypeBaseValue(selectedGameType);
     // Simplified calculation (assumes 1 matador)
@@ -134,10 +129,7 @@ export function AnnouncementPanel({
     ouvert,
   ]);
 
-  // Check if announcement meets bid
-  const meetsBid = estimatedValue >= currentBid;
-
-  // Handle announcement confirmation
+  // Handle announcement confirmation - must be before early return
   const handleAnnounce = useCallback(() => {
     const contract: Contract = {
       gameType: selectedGameType,
@@ -156,7 +148,7 @@ export function AnnouncementPanel({
     declareGame,
   ]);
 
-  // Handle modifier changes with dependencies
+  // Handle modifier changes with dependencies - must be before early return
   const handleSchneiderChange = useCallback((checked: boolean) => {
     setSchneiderAnnounced(checked);
     if (!checked) {
@@ -181,6 +173,14 @@ export function AnnouncementPanel({
       setSchwarzAnnounced(true);
     }
   }, []);
+
+  // Only show when it's time to declare and human is declarer (AFTER all hooks)
+  if (gameState !== GameState.Declaring || declarer !== humanPlayer) {
+    return null;
+  }
+
+  // Check if announcement meets bid
+  const meetsBid = estimatedValue >= currentBid;
 
   const isNullGame = selectedGameType === GameType.Null;
 

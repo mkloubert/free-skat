@@ -196,8 +196,10 @@ export function SkatSelectionUI({
 
   // Handle skat pickup
   const handlePickup = useCallback(() => {
+    console.log("[SkatSelectionUI] handlePickup called, declarer:", declarer);
     pickUpSkat();
-  }, [pickUpSkat]);
+    console.log("[SkatSelectionUI] pickUpSkat() completed");
+  }, [pickUpSkat, declarer]);
 
   // Handle play hand (no pickup)
   const handlePlayHand = useCallback(() => {

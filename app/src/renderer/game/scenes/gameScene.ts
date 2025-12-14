@@ -47,6 +47,7 @@ import { loadCardSprites, createCardObject } from "./cardObjects";
 import { flipCard, animateShuffle, animateCardMove } from "./cardAnimations";
 import {
   calculateHandPositions,
+  calculateVerticalHandPositions,
   updateCardHoverState,
   updateLegalMoveHighlighting,
 } from "./handManagement";
@@ -65,10 +66,13 @@ import {
  */
 export function createGameScene(k: KAPLAYCtx): void {
   k.scene("game", () => {
-    // Initialize game store
+    // Initialize game store - call methods first, then get fresh state
+    // (Zustand creates new state objects on each set() call)
+    useGameStore.getState().initGame();
+    useGameStore.getState().dealCards();
+
+    // Get fresh state AFTER dealing - this contains the dealt cards
     const store = useGameStore.getState();
-    store.initGame();
-    store.dealCards();
 
     // Create scene state
     const sceneState: SceneState = createInitialSceneState();
@@ -80,6 +84,8 @@ export function createGameScene(k: KAPLAYCtx): void {
       ...store.players[Player.Rearhand].hand.cards,
       ...store.skat,
     ];
+
+    console.log(`[GameScene] Cards to load: ${allCards.length}`);
 
     // Load card sprites
     loadCardSprites(k, allCards);
@@ -305,24 +311,28 @@ function createUIElements(k: KAPLAYCtx, sceneState: SceneState): void {
     k.z(LAYERS.ui),
   ]) as UITextObj;
 
+  // Opponent 1 (left side) - label rotated 90° clockwise, positioned between cards and center
   sceneState.playerLabels[Player.Middlehand] = k.add([
     k.text("Opponent 1", labelStyle),
     k.pos(
-      TABLE_POSITIONS.players.middlehand.x,
-      TABLE_POSITIONS.players.middlehand.y + 80
+      TABLE_POSITIONS.players.middlehand.x + 60,
+      TABLE_POSITIONS.players.middlehand.y
     ),
     k.anchor("center"),
+    k.rotate(90),
     k.color(255, 255, 255),
     k.z(LAYERS.ui),
   ]) as UITextObj;
 
+  // Opponent 2 (right side) - label rotated 90° counter-clockwise, positioned between cards and center
   sceneState.playerLabels[Player.Rearhand] = k.add([
     k.text("Opponent 2", labelStyle),
     k.pos(
-      TABLE_POSITIONS.players.rearhand.x,
-      TABLE_POSITIONS.players.rearhand.y + 80
+      TABLE_POSITIONS.players.rearhand.x - 60,
+      TABLE_POSITIONS.players.rearhand.y
     ),
     k.anchor("center"),
+    k.rotate(-90),
     k.color(255, 255, 255),
     k.z(LAYERS.ui),
   ]) as UITextObj;
@@ -583,6 +593,12 @@ function startDealingAnimation(
 
       function dealNextCard(): void {
         if (cardIndex >= dealOrderCards.length) {
+          // Clear scene state arrays BEFORE destroying deck cards
+          // (they reference the same objects)
+          sceneState.playerCardObjects = [];
+          sceneState.opponentCardObjects = [[], []];
+          sceneState.skatCardObjects = [];
+
           // Clean up deck cards
           for (const card of deckCards) {
             if (card && card.destroy) {
@@ -621,7 +637,8 @@ function startDealingAnimation(
           targetY = pos.y;
         } else if (owner === Player.Middlehand) {
           const opponentCards = sceneState.opponentCardObjects[0].length;
-          const positions = calculateHandPositions(
+          // Use vertical positioning for side opponents
+          const positions = calculateVerticalHandPositions(
             opponentCards + 1,
             TABLE_POSITIONS.players.middlehand.x,
             TABLE_POSITIONS.players.middlehand.y
@@ -632,7 +649,8 @@ function startDealingAnimation(
           targetAngle = 90;
         } else if (owner === Player.Rearhand) {
           const opponentCards = sceneState.opponentCardObjects[1].length;
-          const positions = calculateHandPositions(
+          // Use vertical positioning for side opponents
+          const positions = calculateVerticalHandPositions(
             opponentCards + 1,
             TABLE_POSITIONS.players.rearhand.x,
             TABLE_POSITIONS.players.rearhand.y
@@ -692,22 +710,23 @@ function createFinalHandCards(
   store: ReturnType<typeof useGameStore.getState>,
   updateUI: () => void
 ): void {
-  // Clear old card objects
-  for (const card of sceneState.playerCardObjects) {
-    if (card && card.destroy) card.destroy();
+  // Arrays are already cleared in startDealingAnimation before deck cards are destroyed
+  // Just ensure they're empty (safety check)
+  if (sceneState.playerCardObjects.length > 0) {
+    console.warn("[GameScene] playerCardObjects not empty - clearing");
+    sceneState.playerCardObjects = [];
   }
-  for (const cards of sceneState.opponentCardObjects) {
-    for (const card of cards) {
-      if (card && card.destroy) card.destroy();
-    }
+  if (
+    sceneState.opponentCardObjects[0].length > 0 ||
+    sceneState.opponentCardObjects[1].length > 0
+  ) {
+    console.warn("[GameScene] opponentCardObjects not empty - clearing");
+    sceneState.opponentCardObjects = [[], []];
   }
-  for (const card of sceneState.skatCardObjects) {
-    if (card && card.destroy) card.destroy();
+  if (sceneState.skatCardObjects.length > 0) {
+    console.warn("[GameScene] skatCardObjects not empty - clearing");
+    sceneState.skatCardObjects = [];
   }
-
-  sceneState.playerCardObjects = [];
-  sceneState.opponentCardObjects = [[], []];
-  sceneState.skatCardObjects = [];
 
   // Sort player cards
   const sortedPlayerCards = sortForGame(
@@ -720,6 +739,11 @@ function createFinalHandCards(
     sortedPlayerCards.length,
     TABLE_POSITIONS.players.forehand.x,
     HAND_SETTINGS.playerHandY
+  );
+
+  console.log(
+    `[GameScene] Creating ${sortedPlayerCards.length} player cards at positions:`,
+    playerPositions.map((p) => `(${p.x}, ${p.y})`).join(", ")
   );
 
   for (let i = 0; i < sortedPlayerCards.length; i++) {
@@ -738,9 +762,13 @@ function createFinalHandCards(
     sceneState.playerCardObjects.push(cardObj);
   }
 
-  // Create opponent cards (face down)
+  console.log(
+    `[GameScene] Created ${sceneState.playerCardObjects.length} player card objects`
+  );
+
+  // Create opponent cards (face down) - use vertical positioning for side players
   const opp1Cards = store.players[Player.Middlehand].hand.cards;
-  const opp1Positions = calculateHandPositions(
+  const opp1Positions = calculateVerticalHandPositions(
     opp1Cards.length,
     TABLE_POSITIONS.players.middlehand.x,
     TABLE_POSITIONS.players.middlehand.y
@@ -762,7 +790,7 @@ function createFinalHandCards(
   }
 
   const opp2Cards = store.players[Player.Rearhand].hand.cards;
-  const opp2Positions = calculateHandPositions(
+  const opp2Positions = calculateVerticalHandPositions(
     opp2Cards.length,
     TABLE_POSITIONS.players.rearhand.x,
     TABLE_POSITIONS.players.rearhand.y
@@ -801,19 +829,34 @@ function createFinalHandCards(
   console.log(
     `[GameScene] Created ${sceneState.playerCardObjects.length} sorted face-up player cards`
   );
+  console.log(
+    `[GameScene] Total cards in scene - Player: ${sceneState.playerCardObjects.length}, Opp1: ${sceneState.opponentCardObjects[0].length}, Opp2: ${sceneState.opponentCardObjects[1].length}, Skat: ${sceneState.skatCardObjects.length}`
+  );
 
   // Start bidding phase instead of trick playing
+  console.log("[GameScene] Calling store.startBidding()...");
   store.startBidding();
+  console.log("[GameScene] startBidding() completed");
+
+  // Verify cards still exist after startBidding
+  console.log(
+    `[GameScene] After startBidding - Player cards: ${sceneState.playerCardObjects.length}, first card exists: ${sceneState.playerCardObjects[0] ? "yes" : "no"}`
+  );
 
   // Set up card interactions for later use
   setupCardInteractions(k, sceneState, updateUI);
+  console.log("[GameScene] Card interactions set up");
 
   // Subscribe to store changes to trigger AI bidding and skat handling
   let lastCurrentPlayer = store.currentPlayer;
   let lastBiddingResult = store.bidding.result;
   let lastGameState = store.gameState;
+  console.log("[GameScene] Setting up store subscription...");
   useGameStore.subscribe((state) => {
     const gameStateChanged = state.gameState !== lastGameState;
+    console.log(
+      `[GameScene] Store subscription fired - gameState: ${GameState[state.gameState]}, changed: ${gameStateChanged}`
+    );
     lastGameState = state.gameState;
 
     // Check if we're in bidding phase and something changed

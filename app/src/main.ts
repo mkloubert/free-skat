@@ -27,9 +27,12 @@ registerNetworkIpc();
 
 const createWindow = () => {
   // Create the browser window.
+  // Size matches the game canvas (960x540) plus some padding for window chrome
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1024,
+    height: 640,
+    minWidth: 960,
+    minHeight: 540,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },

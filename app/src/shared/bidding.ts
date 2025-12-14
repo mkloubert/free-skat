@@ -310,14 +310,14 @@ function handlePassInFirstPhase(
   player: Player
 ): BiddingState {
   if (player === Player.Middlehand) {
-    // Middlehand passed - Forehand now bids against Rearhand
-    // But first, Forehand gets to respond to Rearhand
+    // Middlehand passed - Forehand wins first phase
+    // Rearhand now bids against Forehand
+    // Keep the current bid (Forehand held on it, or it's 0 if no bids were made)
     state.phase = BiddingPhase.WinnerToRear;
     state.firstPhaseWinner = Player.Forehand;
     state.activePlayer = Player.Rearhand;
     state.isActiveBidding = true;
-    state.currentBidder = null;
-    state.currentBid = 0;
+    // Do NOT reset currentBid - if Forehand held on a bid, Rearhand must beat it
   } else if (player === Player.Forehand) {
     // Forehand passed - Middlehand won first phase
     state.phase = BiddingPhase.WinnerToRear;

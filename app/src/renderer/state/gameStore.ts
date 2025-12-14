@@ -353,7 +353,17 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   pickUpSkat: () => {
     const state = get();
-    if (!state.declarer) return;
+    console.log(
+      "[GameStore] pickUpSkat called - declarer:",
+      state.declarer,
+      "skat cards:",
+      state.skat.length
+    );
+    // Use explicit null check - declarer can be 0 (Player.Forehand) which is falsy!
+    if (state.declarer === null || state.declarer === undefined) {
+      console.warn("[GameStore] pickUpSkat: No declarer set, returning early");
+      return;
+    }
 
     const declarerData = state.players[state.declarer];
     const newHand = createHandFromCards([...declarerData.hand.cards]);
@@ -362,6 +372,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     for (const card of state.skat) {
       addCardToHand(newHand, card);
     }
+
+    console.log(
+      "[GameStore] pickUpSkat: Setting state to Discarding, hand size:",
+      newHand.cards.length
+    );
 
     set({
       gameState: GameState.Discarding,
@@ -379,7 +394,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   discardToSkat: (cards: Card[]) => {
     const state = get();
-    if (!state.declarer || cards.length !== 2) return;
+    // Use explicit null check - declarer can be 0 (Player.Forehand) which is falsy!
+    if (
+      state.declarer === null ||
+      state.declarer === undefined ||
+      cards.length !== 2
+    )
+      return;
 
     const declarerData = state.players[state.declarer];
     const newHand = createHandFromCards([...declarerData.hand.cards]);
@@ -404,7 +425,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   declareGame: (gameType: GameType, contract: Contract) => {
     const state = get();
-    if (!state.declarer) return;
+    // Use explicit null check - declarer can be 0 (Player.Forehand) which is falsy!
+    if (state.declarer === null || state.declarer === undefined) return;
 
     // Sort all hands according to game type
     const sortedPlayers = { ...state.players };

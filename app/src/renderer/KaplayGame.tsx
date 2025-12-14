@@ -46,14 +46,14 @@ export const KaplayGame = forwardRef<KaplayGameHandle>(function KaplayGame(
     if (!canvas) return;
 
     // Initialize KAPlay with game settings
+    // Use devicePixelRatio for crisp rendering on high-DPI/Retina displays
     const k = kaplay({
       global: false,
       canvas,
       width: CANVAS_WIDTH,
       height: CANVAS_HEIGHT,
-      letterbox: true,
       background: [0, 0, 0],
-      crisp: true, // Sharp pixel rendering
+      pixelDensity: window.devicePixelRatio || 1,
     });
 
     kRef.current = k;
@@ -79,7 +79,13 @@ export const KaplayGame = forwardRef<KaplayGameHandle>(function KaplayGame(
         backgroundColor: "#1a1a1a",
       }}
     >
-      <canvas ref={canvasRef} />
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: CANVAS_WIDTH,
+          height: CANVAS_HEIGHT,
+        }}
+      />
     </div>
   );
 });
