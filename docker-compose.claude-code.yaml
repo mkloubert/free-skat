@@ -11,6 +11,7 @@ services:
     volumes:
       - ./app:/workspace
       - ./app/CLAUDE.md:/workspace/CLAUDE.md:ro
+      - ./app/MILESTONE.md:/workspace/MILESTONE.md:ro
 
     working_dir: /workspace
 
