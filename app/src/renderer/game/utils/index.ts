@@ -12,22 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * FreeSkat shared types and utilities.
- * @module shared
- */
-
-// Card types
-export * from "./suit";
-export * from "./rank";
-export * from "./card";
-export * from "./trick";
-
-// Game types
-export * from "./player";
-export * from "./gametype";
-export * from "./gamestate";
-export * from "./bidding";
-
-// Protocol types
-export * from "./protocol";
+export * from "./constants";
+export * from "./cardRenderer";

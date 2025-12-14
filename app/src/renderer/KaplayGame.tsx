@@ -14,6 +14,8 @@
 
 import { useEffect, useRef } from "react";
 import kaplay, { type KAPLAYCtx } from "kaplay";
+import { createGameScene } from "./game/scenes/gameScene";
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from "./game/utils/constants";
 
 export function KaplayGame() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -23,32 +25,40 @@ export function KaplayGame() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Tipp: global:false vermeidet "pos/sprite/add" im window-Namespace
+    // Initialize KAPlay with game settings
     const k = kaplay({
       global: false,
       canvas,
-      width: 960,
-      height: 540,
+      width: CANVAS_WIDTH,
+      height: CANVAS_HEIGHT,
       letterbox: true,
       background: [0, 0, 0],
+      crisp: true, // Sharp pixel rendering
     });
 
     kRef.current = k;
 
-    k.scene("game", () => {
-      k.add([k.text("Hello KAPLAY in Electron 👋"), k.pos(24, 24)]);
-    });
+    // Create and start the game scene
+    createGameScene(k);
     k.go("game");
 
     return () => {
-      // graceful cleanup and shutdown
+      // Graceful cleanup and shutdown
       k.quit();
       kRef.current = null;
     };
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "grid",
+        placeItems: "center",
+        backgroundColor: "#1a1a1a",
+      }}
+    >
       <canvas ref={canvasRef} />
     </div>
   );
