@@ -136,6 +136,11 @@ export function createGameScene(k: KAPLAYCtx): void {
       if (sceneState.dragState.isDragging && sceneState.dragState.draggedCard) {
         const card = sceneState.dragState.draggedCard;
         if (card && card.pos) {
+          // Bring card to front only when actual dragging starts (mouse moves)
+          if (card.z !== LAYERS.draggedCard) {
+            card.z = LAYERS.draggedCard;
+          }
+
           card.pos.x = pos.x - sceneState.dragState.offset.x;
           card.pos.y = pos.y - sceneState.dragState.offset.y;
         }
@@ -160,6 +165,17 @@ export function createGameScene(k: KAPLAYCtx): void {
           sceneState.dragState.draggedCard = null;
           return;
         }
+
+        // Check if card was actually dragged (z-index changed)
+        const wasActuallyDragged = card.z === LAYERS.draggedCard;
+
+        // If just clicked (not dragged), only clear drag state
+        if (!wasActuallyDragged) {
+          sceneState.dragState.isDragging = false;
+          sceneState.dragState.draggedCard = null;
+          return;
+        }
+
         const mousePos = k.mousePos();
 
         // Hide drop zone
@@ -179,6 +195,11 @@ export function createGameScene(k: KAPLAYCtx): void {
             sceneState.dragState.draggedCard = null;
             sceneState.selectedCard = null;
             card.selected = false;
+
+            // Clear hovered state to prevent conflicting animations
+            if (sceneState.hoveredCard === card) {
+              sceneState.hoveredCard = null;
+            }
 
             playCardToTrick(k, sceneState, card, Player.Forehand, () => {
               processGameFlow(k, sceneState, updateUI);
@@ -413,6 +434,11 @@ function createPlayButton(
       sceneState.selectedCard = null;
       cardToPlay.selected = false;
 
+      // Clear hovered state to prevent conflicting animations
+      if (sceneState.hoveredCard === cardToPlay) {
+        sceneState.hoveredCard = null;
+      }
+
       playCardToTrick(k, sceneState, cardToPlay, Player.Forehand, () => {
         processGameFlow(k, sceneState, updateUI);
       });
@@ -428,17 +454,27 @@ function setupCardInteractions(
   sceneState: SceneState,
   updateUI: () => void
 ): void {
+  // Track which cards are currently under the cursor
+  const cardsUnderCursor: Set<CardGameObj> = new Set();
+
   for (const cardObj of sceneState.playerCardObjects) {
-    // Hover effects
+    // Track cards under cursor for z-index-based hover detection
     cardObj.onHover(() => {
-      if (!sceneState.dragState.isDragging) {
-        updateCardHoverState(k, cardObj, true, cardObj.selected);
-      }
+      cardsUnderCursor.add(cardObj);
     });
 
     cardObj.onHoverEnd(() => {
-      if (!sceneState.dragState.isDragging) {
-        updateCardHoverState(k, cardObj, false, cardObj.selected);
+      cardsUnderCursor.delete(cardObj);
+      // If this was the hovered card, clear it
+      if (sceneState.hoveredCard === cardObj) {
+        // Only animate if card is still in player's hand (not played)
+        if (
+          !sceneState.dragState.isDragging &&
+          sceneState.playerCardObjects.includes(cardObj)
+        ) {
+          updateCardHoverState(k, cardObj, false, cardObj.selected);
+        }
+        sceneState.hoveredCard = null;
       }
     });
 
@@ -490,11 +526,52 @@ function setupCardInteractions(
           y: mousePos.y - cardObj.pos.y,
         };
 
-        // Bring to front
-        cardObj.z = LAYERS.draggedCard;
+        // Note: Z-index is changed in onMouseMove when actual dragging starts
       }
     });
   }
+
+  // Frame-based hover detection: only hover the topmost card (highest z-index)
+  k.onUpdate(() => {
+    if (sceneState.dragState.isDragging) {
+      return;
+    }
+
+    // Find the topmost card under cursor (highest z-index) that is still in player's hand
+    let topmostCard: CardGameObj | null = null;
+    let highestZ = -Infinity;
+
+    for (const card of cardsUnderCursor) {
+      // Only consider cards still in player's hand
+      if (sceneState.playerCardObjects.includes(card) && card.z > highestZ) {
+        highestZ = card.z;
+        topmostCard = card;
+      }
+    }
+
+    // Only update if the hovered card changed
+    if (topmostCard !== sceneState.hoveredCard) {
+      // Un-hover the previous card (only if still in player's hand)
+      if (
+        sceneState.hoveredCard &&
+        sceneState.playerCardObjects.includes(sceneState.hoveredCard)
+      ) {
+        updateCardHoverState(
+          k,
+          sceneState.hoveredCard,
+          false,
+          sceneState.hoveredCard.selected
+        );
+      }
+
+      // Hover the new topmost card
+      if (topmostCard) {
+        updateCardHoverState(k, topmostCard, true, topmostCard.selected);
+      }
+
+      sceneState.hoveredCard = topmostCard;
+    }
+  });
 }
 
 /**
@@ -843,9 +920,10 @@ function createFinalHandCards(
     `[GameScene] After startBidding - Player cards: ${sceneState.playerCardObjects.length}, first card exists: ${sceneState.playerCardObjects[0] ? "yes" : "no"}`
   );
 
-  // Set up card interactions for later use
-  setupCardInteractions(k, sceneState, updateUI);
-  console.log("[GameScene] Card interactions set up");
+  // Note: Card interactions are set up when TrickPlaying state is reached
+  console.log(
+    "[GameScene] Card interactions will be set up when trick playing starts"
+  );
 
   // Subscribe to store changes to trigger AI bidding and skat handling
   let lastCurrentPlayer = store.currentPlayer;

@@ -55,6 +55,17 @@ export function playCardToTrick(
   // Update z-index for played card
   cardObj.z = LAYERS.playedCards + player;
 
+  // Remove from player's hand objects IMMEDIATELY (before animation)
+  // This prevents hover tracking from interfering with the animation
+  if (player === Player.Forehand) {
+    const index = sceneState.playerCardObjects.indexOf(cardObj);
+    if (index !== -1) {
+      sceneState.playerCardObjects.splice(index, 1);
+    }
+    // Reposition remaining cards immediately
+    repositionPlayerHand(k, sceneState);
+  }
+
   // Animate card to trick position
   animateCardMove(
     k,
@@ -68,16 +79,6 @@ export function playCardToTrick(
 
       // Update game store
       store.playCard(player, cardObj.cardData);
-
-      // Remove from player's hand objects if it's the human player
-      if (player === Player.Forehand) {
-        const index = sceneState.playerCardObjects.indexOf(cardObj);
-        if (index !== -1) {
-          sceneState.playerCardObjects.splice(index, 1);
-        }
-        // Reposition remaining cards
-        repositionPlayerHand(k, sceneState);
-      }
 
       if (onComplete) {
         onComplete();

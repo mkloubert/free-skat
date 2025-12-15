@@ -86,6 +86,10 @@ export function processGameFlow(
     // Next player's turn
     const nextPlayer = getLeftNeighbor(store.currentPlayer);
     store.setCurrentPlayer(nextPlayer);
+
+    // Always update legal move highlighting (clears highlighting when not player's turn)
+    const currentState = useGameStore.getState();
+    updateLegalMoveHighlighting(k, sceneState, currentState);
     updateUI();
 
     if (nextPlayer !== Player.Forehand) {
@@ -95,10 +99,6 @@ export function processGameFlow(
           processGameFlow(k, sceneState, updateUI);
         });
       });
-    } else {
-      // Player's turn - update legal moves
-      const currentState = useGameStore.getState();
-      updateLegalMoveHighlighting(k, sceneState, currentState);
     }
   }
 }
@@ -107,6 +107,7 @@ export function processGameFlow(
  * Triggers game over state transition.
  * The React GameResultSummary component handles the display.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function showGameOver(_k: KAPLAYCtx): void {
   const store = useGameStore.getState();
 

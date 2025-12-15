@@ -70,6 +70,8 @@ export interface SceneState {
   skatCardObjects: CardGameObj[];
   trickCardObjects: (CardGameObj | null)[];
   selectedCard: CardGameObj | null;
+  /** Currently hovered card (topmost under cursor) */
+  hoveredCard: CardGameObj | null;
   currentPlayerText: UITextObj | null;
   trickCountText: UITextObj | null;
   pointsText: UITextObj | null;
@@ -91,6 +93,7 @@ export function createInitialSceneState(): SceneState {
     skatCardObjects: [],
     trickCardObjects: [null, null, null],
     selectedCard: null,
+    hoveredCard: null,
     currentPlayerText: null,
     trickCountText: null,
     pointsText: null,

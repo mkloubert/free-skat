@@ -110,12 +110,14 @@ export function updateCardHoverState(
 
 /**
  * Updates legal move highlighting for all cards in hand.
+ * When it's not the player's turn, all cards are shown at full opacity.
  */
 export function updateLegalMoveHighlighting(
   _k: KAPLAYCtx,
   sceneState: SceneState,
   gameState: GameStoreState
 ): void {
+  const isPlayerTurn = gameState.currentPlayer === Player.Forehand;
   const leadCard = gameState.currentTrick.cards.find((c) => c !== null) ?? null;
   const playerHand = gameState.players[Player.Forehand].hand;
 
@@ -128,8 +130,11 @@ export function updateLegalMoveHighlighting(
     );
     cardObj.isLegalMove = isLegal;
 
-    // Visual feedback for legal/illegal moves
-    if (isLegal) {
+    // Visual feedback for legal/illegal moves (only when it's player's turn)
+    if (!isPlayerTurn) {
+      // Not player's turn - show all cards at full opacity
+      cardObj.opacity = 1;
+    } else if (isLegal) {
       cardObj.opacity = 1;
     } else {
       cardObj.opacity = 0.5;
